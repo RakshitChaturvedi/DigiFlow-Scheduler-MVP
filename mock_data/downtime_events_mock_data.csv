@@ -1,0 +1,16 @@
+﻿machine_id_code,start_time,end_time,reason
+M001,16-06-2025 09:00,16-06-2025 17:00,Planned Maintenance
+M002,17-06-2025 09:00,17-06-2025 17:00,Unplanned Breakdown
+M003,18-06-2025 09:00,18-06-2025 17:00,Tool Change
+M004,19-06-2025 09:00,19-06-2025 17:00,Planned Maintenance
+M005,19-06-2025 09:00,19-06-2025 17:00,Unplanned Breakdown
+M006,,,
+M007,,,
+M008,,,
+M009,,,
+M010,,,
+M011,,,
+M012,,,
+M013,,,
+M014,,,
+M015,,,

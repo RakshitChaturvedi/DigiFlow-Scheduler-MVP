@@ -22,6 +22,8 @@ class Machine(Base):
     # RELATIONSHIPS
     # A machine can have many scheduled tasks assigned to it
     scheduled_tasks = relationship("ScheduledTask", back_populates="assigned_machine")
+    # A machine can have many downtime events
+    downtime_events = relationship("DowntimeEvent", back_populates="machine")
 
     def __repr__(self):
         return f"<Machine(id={self.id}, machine_id_code = '{self.machine_id_code}', type = '{self.machine_type}')>"
@@ -97,11 +99,28 @@ class ScheduledTask(Base):
     # RELATIONSHIPS
     # to parent objects
     production_order = relationship("ProductionOrder", back_populates="scheduled_tasks")
-
     process_step_definition = relationship("ProcessStep", back_populates="scheduled_tasks_as_steps")
     assigned_machine = relationship("Machine", back_populates="scheduled_tasks")
 
     def __repr__(self):
         return(f"<ScheduledTask(id={self.id}, order_id={self.production_order_id}, "
                f"machine_id={self.assigned_machine_id}, start={self.start_time.strftime('%Y-%m-%d %H:%M')})>")
+
+class DowntimeEvent(Base):
+    __tablename__ = 'downtime_events'
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    machine_id = Column(Integer, ForeignKey('machines.id'), nullable=False, index=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    reason = Column(String, nullable=False)
+
+    #Relationship to machine
+    machine = relationship("Machine", back_populates="downtime_events")
+
+    def __repr__(self):
+        return(f"<DowntimeEvent(id={self.id}, machine_id={self.machine_id}, "
+               f"start = '{self.start_time.strftime('%Y-%m-%d %H:%M')}, reason = '{self.reason})>")
+    
     
