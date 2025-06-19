@@ -89,7 +89,7 @@ def load_and_prepare_data_for_ortools(
         total_original_duration = int(setup_time + op_duration)
         
         all_tasks_for_solver[task_key] = TaskData(
-            production_order_id=order.id,job_id_code = order_id_code, step=log.step_number,
+            production_order_id=order.id, job_id_code=order.order_id_code, step=log.step_number,
             process_step_id=step_def.id, machine_type="", process_step_name=step_def.step_name,
             is_fixed=True, start_offset_mins=start_offset, duration=total_original_duration,
             assigned_machine_id=log.machine_id
@@ -107,22 +107,33 @@ def load_and_prepare_data_for_ortools(
         next_step_earliest_start = max(job_arrival, job_next_available_time.get(order_id_code, scheduling_anchor_time))
         start_offset_mins = max(0, int((next_step_earliest_start - scheduling_anchor_time).total_seconds() // 60))
 
-        if route_id in process_steps_by_route:
-            for step_num, step_data in sorted(process_steps_by_route[route_id].items()):
+        if str(route_id) in process_steps_by_route:
+            for step_num, step_data in sorted(process_steps_by_route[str(route_id)].items()):
                 task_key = (order_id_code, step_num)
                 if task_key in all_tasks_for_solver: # Skip if it was an in-progress task
+                    print(f"[SKIP] Duplicate task_key found: {task_key}")
                     continue
                 
-                op_duration = (step_data.base_duration_per_unit_mins or 0) * (order.quantity_to_produce or 1)
-                
+                base_per_unit = int(step_data.base_duration_per_unit_mins or 0)
+                quantity = int(order.quantity_to_produce or 1)
+                op_duration = max(1, base_per_unit * quantity)
+
+                # DEBUG
+                print(f"[DEBUG] Order {order_id_code}, Step {step_num}: base={base_per_unit}, qty={quantity} → duration={op_duration}")
+                print("[DEBUG] route_id keys available:", list(process_steps_by_route.keys()))
+                print(f"[DEBUG] checking route_id = {route_id}")
+
+
                 all_tasks_for_solver[task_key] = TaskData(
                     production_order_id=order.id, job_id_code=order_id_code, step=step_num,
                     process_step_id=step_data.id, machine_type=step_data.required_machine_type,
                     process_step_name=step_data.step_name, is_fixed=False,
-                    operation_duration=max(1, int(op_duration)),
+                    operation_duration=op_duration,
                     earliest_start_mins=start_offset_mins
                 )
                 job_to_tasks[order_id_code].append(task_key)
+                print(f"[TASK ADDED] {task_key} → duration: {op_duration}")
+
 
     logging.info(f"Prepared {len(all_tasks_for_solver)} tasks for OR-Tools scheduling.")
     return all_tasks_for_solver, job_to_tasks, active_machines, future_downtime_events
@@ -337,10 +348,21 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
     """Atomically updates the schedule in the database."""
     logging.info(f"Saving {len(scheduled_tasks_data)} tasks to the database...")
     try:
+
+        allowed_keys = {
+            'production_order_id',
+            'process_step_id',
+            'assigned_machine_id',
+            'start_time',
+            'end_time',
+            'scheduled_duration_mins',
+            'status'
+        }
+
         # --- FIX 5: ROBUST DB SAVE LOGIC ---
         # Get all existing schedulable tasks for potential deletion
         existing_task_ids_to_delete = {
-            t.id for t in db.query(ScheduledTask.id).filter(ScheduledTask.status == 'Scheduled')
+            t.id for t in db.query(ScheduledTask).filter(ScheduledTask.status == 'Scheduled').all()
         }
         
         newly_scheduled_po_ids = {t['production_order_id'] for t in scheduled_tasks_data if t['status'] == 'Scheduled'}
@@ -364,7 +386,9 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
                     existing_task_ids_to_delete.remove(task_to_update.id)
             else:
                 # This is a new task to be scheduled
-                db.add(ScheduledTask(**task_data))
+                filtered_data = {k: v for k, v in task_data.items() if k in allowed_keys}
+                db.add(ScheduledTask(**filtered_data))
+
 
         # Delete old 'Scheduled' tasks that were not part of the new schedule
         if existing_task_ids_to_delete:
@@ -394,6 +418,10 @@ def main():
         if not all_tasks:
             logging.info("No tasks to schedule. Exiting.")
             return
+
+        orders = {o.id: o for o in db.query(ProductionOrder).all()}
+        for k, t in all_tasks.items():
+            print(f"{k}: duration={t.operation_duration}, quantity={orders[t.production_order_id].quantity_to_produce}")
 
         optimal_schedule, makespan, status = schedule_with_ortools(
             all_tasks, job_to_tasks, machines_orm, downtime_events, current_real_time_anchor, db, horizon=1000
