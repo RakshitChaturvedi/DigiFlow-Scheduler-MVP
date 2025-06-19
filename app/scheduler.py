@@ -1,241 +1,418 @@
 import collections
-from collections import defaultdict
 import logging
 import os
-import random
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import List, Dict, Tuple, Any, DefaultDict, cast
+from typing import Any, DefaultDict, Dict, List, Optional, Tuple, cast
+
 import pandas as pd
 from ortools.sat.python import cp_model
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
+# Assuming these are defined in app/config.py
+from app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK
 from app.database import SessionLocal
-from app.models import Machine, ProcessStep, ProductionOrder, ScheduledTask, DowntimeEvent
+from app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# CONFIGURATION
-DEFAULT_SOLVER_TIMEOUT_SECONDS = 120.0
-BASE_SOLVER_TIMEOUT = 10.0
-TIMEOUT_PER_TASK = 0.2
+# --- NEW: Dataclasses for Type Safety and Clarity ---
+@dataclass
+class TaskData:
+    """A structured representation of a task for the solver."""
+    production_order_id: int
+    job_id_code: str
+    step: int
+    process_step_id: int
+    machine_type: str
+    process_step_name: str
+    is_fixed: bool = False
+    # For fixed tasks
+    start_offset_mins: Optional[int] = None
+    duration: Optional[int] = None
+    assigned_machine_id: Optional[int] = None
+    # For schedulable tasks
+    operation_duration: Optional[int] = None
+    earliest_start_mins: Optional[int] = None
 
-# -- Data Structures for OR Tools --
-TaskData = Dict[str, Any] # type hint for dictionary representing a task for the solver
-MachineInstanceData = Dict[str, Any]
-TaskIdentifier = Tuple[str, int]
+TaskIdentifier = Tuple[str, int] # (job_id_code, step_number)
 
 def load_and_prepare_data_for_ortools(
-        db: Session,
-        scheduling_anchor_time : datetime,
-) -> Tuple[
-    Dict[TaskIdentifier, TaskData],
-    Dict[str, List[TaskIdentifier]], 
-    List[Machine], 
-    List[ScheduledTask], 
-    List[DowntimeEvent]
-]:
-    
+    db: Session,
+    scheduling_anchor_time: datetime
+) -> Tuple[Dict[TaskIdentifier, TaskData], Dict[str, List[TaskIdentifier]], List[Machine], List[DowntimeEvent]]:
     """
-    Loads data from the database, prepares it for the OR-Tools model,
-    identifies in-progress jobs (by status), and filters production orders.
-    Returns:
-        all_tasks_for_solver: Dictionary of tasks (key=(order_id_code, step_num)) ready for OR-Tools.
-        job_to_tasks: Map from job_id_code to its task_keys.
-        active_machines: List of active Machine ORM objects.
-        in_progress_scheduled_tasks: List of ScheduledTask ORM objects that are currently running.
-        downtime_events_orm: List of DowntimeEvent ORM objects relevant for the planning horizon.
+    Loads data, correctly handles in-progress tasks, and prepares data for OR-Tools.
+    This is now robust and accounts for real-world states.
     """
+    logging.info("Loading and preparing data for OR-Tools...")
 
-    logging.info("Loading input data from the database and preparing for OR-Tools... ")
+    active_machines = db.query(Machine).filter(Machine.is_active == True).all()
+    if not active_machines:
+        logging.warning("No active machines found. Cannot create a schedule.")
+        return {}, {}, [], []
+
+    # --- FIX 1: DYNAMIC & CORRECT JOB POOL SELECTION ---
+    # Fetch orders that are not yet fully completed.
+    production_orders_orm = db.query(ProductionOrder).filter(
+        ProductionOrder.current_status.in_(['Pending', 'Queued', 'In-Progress'])
+    ).all()
+
+    # --- FIX 2: ROBUST IN-PROGRESS & DOWNTIME HANDLING ---
+    in_progress_logs = db.query(JobLog).filter(
+        JobLog.actual_start_time.isnot(None),
+        JobLog.actual_end_time.is_(None)
+    ).all()
+    future_downtime_events = db.query(DowntimeEvent).filter(DowntimeEvent.end_time > scheduling_anchor_time).all()
+
+    # --- Data preparation using lookup dictionaries for efficiency ---
+    process_steps_by_route: DefaultDict[str, Dict[int, ProcessStep]] = collections.defaultdict(dict)
+    for ps in db.query(ProcessStep).all():
+        process_steps_by_route[cast(str, ps.product_route_id)][cast(int, ps.step_number)] = ps
+
+    all_tasks_for_solver: Dict[TaskIdentifier, TaskData] = {}
+    job_to_tasks: DefaultDict[str, List[TaskIdentifier]] = collections.defaultdict(list)
+    job_next_available_time: Dict[str, datetime] = {}
     
-    try:
-        # Fetch data
-        active_machines = db.query(Machine).filter(Machine.is_active==True).all()
+    # Process running tasks first to establish them as fixed constraints
+    for log in in_progress_logs:
+        order = log.production_order
+        step_def = process_steps_by_route.get(order.product_route_id, {}).get(log.step_number)
+        if not step_def: continue
 
-        # -- Dynamic job pool selection: Fetch only 'Pending' or 'Queued' orders --
-        production_orders_orm = db.query(ProductionOrder).filter(
-            ProductionOrder.current_status.in_(['Pending', 'Queued'])
-        ).order_by(ProductionOrder.priority, ProductionOrder.arrival_time).all()
-
-        process_steps_orm = db.query(ProcessStep).all()
-
-        # -- Modeling Maintenance and Unplanned Downtime: Fetch relevant Downtime events --
-        downtime_events_orm = db.query(DowntimeEvent).filter(
-            DowntimeEvent.end_time > scheduling_anchor_time # Only future or ongoing downtime
-        ).all()
-
-        # -- Handling In-Progress Jobs: Identify tasks with status 'In Progress' ---
-        # if status is "In Progress", we assume ScheduledTask.start_time is its actual start
-        in_progress_scheduled_tasks = db.query(ScheduledTask).filter(
-            ScheduledTask.status == "In Progress"
-        ).all()
-        logging.info(f"Found {len(in_progress_scheduled_tasks)} in-progress tasks based on status.")
-
-        if not active_machines:
-            logging.warning("No active machines found. Cannot schedule")
-            return {}, {}, [], [], []
-        if not process_steps_orm:
-            logging.warning("No process steps found. Cannot Schedule.")
-            # still return machines, and in-progress tasks, as they are part of the state
-            return {}, {}, active_machines, in_progress_scheduled_tasks, downtime_events_orm
-        if not production_orders_orm and not in_progress_scheduled_tasks:
-            logging.info("No new production orders or in-progress tasks to schedule/monitor.")
-            return {}, {}, active_machines, in_progress_scheduled_tasks, downtime_events_orm
+        task_key = (order.order_id_code, log.step_number)
+        start_offset = int((log.actual_start_time - scheduling_anchor_time).total_seconds() // 60)
         
-
-        # Data structures for loookup
-        machines_by_id = {m.id: m for m in active_machines}
-        machines_by_type: Dict[str, List[Machine]] = collections.defaultdict(list)
-        for m in active_machines:
-            machines_by_type[cast(str, m.machine_type)].append(m)
-
-        process_steps_by_id = {ps.id: ps for ps in process_steps_orm}
-
-        process_steps_by_route: Dict[str, Dict[int, ProcessStep]] = collections.defaultdict(
-            lambda: collections.defaultdict(ProcessStep)
+        # Estimate remaining duration based on original plan
+        op_duration = int(cast(int, step_def.base_duration_per_unit_mins or 0)) * int((order.quantity_to_produce or 1))
+        setup_time = int(step_def.setup_time_mins or 0)
+        total_original_duration = int(setup_time + op_duration)
+        
+        all_tasks_for_solver[task_key] = TaskData(
+            production_order_id=order.id,job_id_code = order_id_code, step=log.step_number,
+            process_step_id=step_def.id, machine_type="", process_step_name=step_def.step_name,
+            is_fixed=True, start_offset_mins=start_offset, duration=total_original_duration,
+            assigned_machine_id=log.machine_id
         )
-        for ps_obj in process_steps_orm:
-            route_id_key = cast(str, ps_obj.product_route_id)
-            step_num_key = cast(int, ps_obj.step_number)
-            process_steps_by_route[route_id_key][step_num_key] = ps_obj
+        job_to_tasks[order.order_id_code].append(task_key)
+        job_next_available_time[order.order_id_code] = log.actual_start_time + timedelta(minutes=total_original_duration)
+
+    # Process all other pending jobs and future steps of in-progress jobs
+    for order in production_orders_orm:
+        order_id_code = order.order_id_code
+        route_id = order.product_route_id
         
-        production_orders_by_id = {order.id: order for order in production_orders_orm}
-        production_orders_by_code = {cast(str, order.order_id_code): order for order in production_orders_orm}
+        # Determine the earliest this job can start its *next* schedulable step
+        job_arrival = order.arrival_time or scheduling_anchor_time
+        next_step_earliest_start = max(job_arrival, job_next_available_time.get(order_id_code, scheduling_anchor_time))
+        start_offset_mins = max(0, int((next_step_earliest_start - scheduling_anchor_time).total_seconds() // 60))
 
-        
-        # OR-Tools input structures
-        all_tasks_for_solver = {}
-        job_to_tasks = collections.defaultdict(list) # changed job_to_tasks key to order_id_code for consistency
-        job_next_available_time = collections.defaultdict(lambda: scheduling_anchor_time) # track last completed/in-progress step for each production order to enforce precedence
-        job_last_fixed_task_key = {} # store task_key of the last fixed task for a job
+        if route_id in process_steps_by_route:
+            for step_num, step_data in sorted(process_steps_by_route[route_id].items()):
+                task_key = (order_id_code, step_num)
+                if task_key in all_tasks_for_solver: # Skip if it was an in-progress task
+                    continue
+                
+                op_duration = (step_data.base_duration_per_unit_mins or 0) * (order.quantity_to_produce or 1)
+                
+                all_tasks_for_solver[task_key] = TaskData(
+                    production_order_id=order.id, job_id_code=order_id_code, step=step_num,
+                    process_step_id=step_data.id, machine_type=step_data.required_machine_type,
+                    process_step_name=step_data.step_name, is_fixed=False,
+                    operation_duration=max(1, int(op_duration)),
+                    earliest_start_mins=start_offset_mins
+                )
+                job_to_tasks[order_id_code].append(task_key)
 
-        # 1. Process in-progress tasks first to establish fixed intervals and next available times
-        for ip_task in in_progress_scheduled_tasks:
-            # need to get the prodctionorder and process step objects via their ids
-            order = production_orders_by_id.get(ip_task.production_order_id)
-            process_step = process_steps_by_id.get(ip_task.process_step_id)
-            assigned_machine = machines_by_id.get(ip_task.assigned_machine_id)
+    logging.info(f"Prepared {len(all_tasks_for_solver)} tasks for OR-Tools scheduling.")
+    return all_tasks_for_solver, job_to_tasks, active_machines, future_downtime_events
 
-            if not order or not process_step or not assigned_machine:
-                logging.warning(f"In-Progress task {ip_task.id} references missing ProductionOrder, ProcessStep or Machine. Skipping.")
-                continue
 
-            order_id_code = cast(str, order.order_id_code)
-            start_time_actual = cast(datetime, ip_task.start_time) # the start time in the db is now the actual start for in-progress tasks
-            if isinstance(ip_task.scheduled_duration_mins, int):
-                duration = ip_task.scheduled_duration_mins
-            else:
-                duration = cast(int, ip_task.scheduled_duration_mins) if isinstance(ip_task.scheduled_duration_mins, int) else int(getattr(ip_task, "scheduled_duration_mins", 0))
-            end_time_actual = cast(datetime, ip_task.end_time)
-            if not isinstance(end_time_actual, datetime):
-                end_time_actual = datetime.fromisoformat(str(end_time_actual))
-
-            if start_time_actual is None: # shouldn't happen for in progress status
-                logging.warning(f"In-Progress task {ip_task.id} has status 'In Progress' but no start_time. Treating as ready now.")
-                start_time_actual = scheduling_anchor_time
-                end_time_actual = scheduling_anchor_time + timedelta(minutes=duration)
-            
-            # Calculate offsets relative to the scheduling anchor time
-            start_offset = int((start_time_actual - scheduling_anchor_time).total_seconds()//60)
-            end_offset = int((end_time_actual - scheduling_anchor_time).total_seconds()//60)
-
-            # Ensures offsets are non-negative for the solver. If task started before anchor, start_offset=0
-            if start_offset < 0:
-                logging.debug(f"Adjusting negative start-offset ({start_offset}) for fixed task {ip_task.id} to 0.")
-                start_offset=0
-
-            # Recalculate duration from adjusted offsets for solver's perspective
-            adjusted_duration = end_offset - start_offset
-            if adjusted_duration < 1: adjusted_duration = 1 # duration must be atleast 1 for solver
-
-            task_key: TaskIdentifier = (order_id_code, cast(int, process_step.step_number))
-            all_tasks_for_solver[task_key] = {
-                'production_order_id': cast(int, order.id),
-                'job_id_code': order_id_code,
-                'step': cast(int, process_step.step_number),
-                'process_step_id': cast(int, process_step.id), # Cast here
-                'assigned_machine_id': cast(int, assigned_machine.id), # Cast here
-                'machine_type': cast(str, assigned_machine.machine_type), # Cast here
-                'duration': adjusted_duration, # use adjusted duration for solver
-                'start_offset_mins': start_offset,
-                'end_offset_mins': end_offset,
-                'process_step_name': cast(str, process_step.step_name), # Cast here
-                'is_fixed': True, # mark this task as fixed for solver
-                'scheduled_task_db_id': cast(int, ip_task.id) # keep reference to the DB object ID
-            }
-            job_to_tasks[order_id_code].append(task_key)
-
-            # next available time for this job is when the current in-progress task finishes
-            job_next_available_time[order_id_code] = end_time_actual
-            job_last_fixed_task_key[order_id_code] = task_key
-
-        
-        # 2. Process new/pending production orders and future steps of in-progress jobs
-        for order in production_orders_orm:
-            order_id_code = cast(str, order.order_id_code)
-            product_route_id = cast(str, order.product_route_id)
-            quantity = cast(int, order.quantity_to_produce) if order.quantity_to_produce is not None else 1
-
-            # start processing from the next step if this job already has fixed steps
-            current_step_number_for_order = 0
-            if order_id_code in job_last_fixed_task_key:
-                last_fixed_step_key = job_last_fixed_task_key[order_id_code]
-                current_step_number_for_order = last_fixed_step_key[1]
-
-            order_arrival_time = cast(datetime, order.arrival_time) if order.arrival_time else scheduling_anchor_time
-            job_next_time = job_next_available_time[order_id_code]
-            earliest_task_start_time = max(order_arrival_time, job_next_time)
-
-            if product_route_id in process_steps_by_route:
-                sorted_steps_for_order = sorted([
-                    ps_obj 
-                    for ps_obj in process_steps_by_route[product_route_id].values()
-                    if ps_obj.step_number > current_step_number_for_order
-                ], key=lambda x: cast(int, x.step_number))
-
-                #Recalculate start_offset_mins relative to scheduling_anchor-time for these dynamic tasks
-                if earliest_task_start_time < scheduling_anchor_time:
-                    start_offset_mins = 0
-                else:
-                    start_offset_mins = int((earliest_task_start_time - scheduling_anchor_time).total_seconds() // 60)
-
-                for step_data in sorted_steps_for_order:
-                    machine_type = cast(str, step_data.required_machine_type)
-
-                    # check if there are any active machines of required type
-                    if machine_type not in machines_by_type or not any(m.is_active for m in machines_by_type[machine_type]):
-                        logging.warning(f"No active machine found for type '{machine_type}' required by job '{order_id_code}' step '{step_data.step_number}'. Skipping this task.")
-                        continue
-
-                    # get setup_time for this machine type from one of the machines of that type
-                    base_duration_per_unit = cast(int, step_data.base_duration_per_unit_mins)
-                    if base_duration_per_unit is None: base_duration_per_unit=0        
-
-                    operation_duration = int(base_duration_per_unit*quantity)
-                    if operation_duration < 1:operation_duration = 1
-
-                    task_key = (order_id_code, cast(int, step_data.step_number))
-                    all_tasks_for_solver[task_key] = {
-                        'production_order_id': order.id,
-                        'job_id_code': order_id_code,
-                        'step': step_data.step_number,
-                        'process_step_id': step_data.id,
-                        'machine_type': machine_type,
-                        'operation_duration': operation_duration, # Store ONLY the operation duration
-                        'start_offset_mins': start_offset_mins,
-                        'process_step_name': step_data.step_name,
-                        'is_fixed': False
-                    }
-                    job_to_tasks[order_id_code].append(task_key)
-            else:
-                logging.warning(f"No process route found for product_route_id: {product_route_id} for job {order_id_code}. Skipping Job.")
-        
-        logging.info(f"Prepared {len(all_tasks_for_solver)} tasks for OR-Tools schedulingb (including fixed).")
-        return all_tasks_for_solver, job_to_tasks, active_machines, in_progress_scheduled_tasks, downtime_events_orm
+def schedule_with_ortools(
+    tasks: Dict[TaskIdentifier, TaskData],
+    jobs_map: Dict[str, List[TaskIdentifier]],
+    machines_orm: List[Machine],
+    downtime_events: List[DowntimeEvent],
+    scheduling_anchor_time: datetime,
+    db_session: Session,
+    horizon: int
+) -> Tuple[List[Dict], float, str]:
+    model = cp_model.CpModel()
     
+    machine_instances = {cast(int, m.id): m for m in machines_orm}
+    machine_type_to_ids = collections.defaultdict(list)
+    for m in machines_orm:
+        machine_type_to_ids[cast(str, m.machine_type)].append(cast(int, m.id))
+
+    horizon = sum(t.duration or t.operation_duration or 0 for t in tasks.values()) + 2880 # 2-day buffer
+
+    task_intervals: Dict[TaskIdentifier, cp_model.IntervalVar] = {}
+    task_assignment_vars: Dict[Tuple[TaskIdentifier, int], cp_model.BoolVar] = {}
+    intervals_on_specific_machine = collections.defaultdict(list)
+
+
+    for task_key, task_data in tasks.items():
+        if task_data.is_fixed:
+            task_intervals[task_key] = model.NewFixedSizeIntervalVar(
+                cast(int, task_data.start_offset_mins), cast(int, task_data.duration), f"fixed_{task_key}"
+            )
+        else:
+            # Schedulable task
+            start = model.NewIntVar(cast(int, task_data.earliest_start_mins), horizon, f"start_{task_key}")
+            duration_val = cast(int, task_data.operation_duration)            
+            end = model.NewIntVar(0, horizon, f"end_{task_key}")
+            
+            selected_interval = None
+            possible_machine_ids = machine_type_to_ids.get(task_data.machine_type, [])
+            literals = []
+
+            for machine_id in possible_machine_ids:
+                assign_var = model.NewBoolVar(f"assign_{task_key}_to_{machine_id}")
+                literals.append(assign_var)
+                task_assignment_vars[(task_key, machine_id)] = assign_var
+            if literals:
+                model.AddExactlyOne(literals)
+            
+            for machine_id in possible_machine_ids:
+                assign_var = task_assignment_vars[(task_key, machine_id)]
+                # Create an optional interval for this task on this specific machine, this interval is only 'present' (active) if assign_var is true
+
+                setup_time = machine_instances[machine_id].default_setup_time_mins or 0
+                total_duration = duration_val + setup_time
+
+                machine_task_interval = model.NewOptionalIntervalVar(
+                    start=start,
+                    size=total_duration,
+                    end=end,
+                    is_present=assign_var,
+                    name=f"interval_{task_key}_on_m{machine_id}"
+                )
+                intervals_on_specific_machine[machine_id].append(machine_task_interval) 
+
+                if selected_interval is None:
+                    selected_interval = machine_task_interval
+
+            if selected_interval:
+                task_intervals[task_key] = selected_interval
+
+    # --- ADD CONSTRAINTS ---
+    # 1. Precedence
+    for job_id, steps in jobs_map.items():
+        steps.sort(key=lambda x: x[1])
+        for i in range(len(steps) - 1):
+            if steps[i] in task_intervals and steps[i+1] in task_intervals:
+                model.Add(task_intervals[steps[i+1]].StartExpr() >= task_intervals[steps[i]].EndExpr())
+    
+    # 2. No-Overlap & Machine-Specific Setup Time
+
+    for machine_id, interval_list in intervals_on_specific_machine.items():
+        if interval_list:
+            model.AddNoOverlap(interval_list)
+    
+    # Add downtime intervals to the same structure
+    for event in downtime_events:
+        mid = event.machine_id
+        if mid in machine_instances:
+            start_offset = max(0, int((event.start_time - scheduling_anchor_time).total_seconds() // 60))
+            duration = int((event.end_time - event.start_time).total_seconds() // 60)
+            if duration > 0:
+                interval = model.NewFixedSizeIntervalVar(start_offset, duration, f"downtime_{event.id}")
+                intervals_on_specific_machine[mid].append(interval)
+
+    """
+    for machine_id, machine in machine_instances.items():
+        intervals_on_this_machine = []
+        for task_key, task_data in tasks.items():
+            if task_data.is_fixed:
+                if task_data.assigned_machine_id == machine_id:
+                    intervals_on_this_machine.append(task_intervals[task_key])
+            elif (task_key, machine_id) in task_assignment_vars:
+                assign_var = task_assignment_vars[(task_key, machine_id)]
+                
+                # --- FIX 3: MACHINE-SPECIFIC SETUP TIME ---
+                setup_time = machine.default_setup_time_mins or 0
+                actual_op_duration = cast(int, task_data.operation_duration)
+                
+                duration_with_setup_val = actual_op_duration + setup_time
+                duration_with_setup_var = model.NewIntVar(
+                    duration_with_setup_val,
+                    duration_with_setup_val,
+                    f"duration_{task_key}_on_m{machine_id}_with_setup"
+                )
+                
+                duration_for_opt_interval = model.NewIntVar(
+                    actual_op_duration,
+                    actual_op_duration,
+                    f"duration_{task_key}_on_m{machine_id}_NO_SETUP"
+                )
+                
+                opt_interval = model.NewOptionalIntervalVar(
+                    start = task_intervals[task_key].StartExpr(), 
+                    end=task_intervals[task_key].EndExpr(), 
+                    size=duration_with_setup_var, 
+                    is_present=assign_var, 
+                    name= f"opt_{task_key}_on_{machine_id}"
+                )
+                intervals_on_this_machine.append(opt_interval)
+                # Link the main task's duration to this choice
+                model.Add(task_intervals[task_key].EndExpr() == opt_interval.EndExpr()).OnlyEnforceIf(assign_var)
+        
+        # Add downtime events for this machine
+        for event in downtime_events:
+            if event.machine_id == machine_id:
+                start_offset = max(0, int((event.start_time - scheduling_anchor_time).total_seconds() // 60))
+                duration = int((event.end_time - event.start_time).total_seconds() // 60)
+                if duration > 0:
+                    intervals_on_this_machine.append(model.NewFixedSizeIntervalVar(start_offset, duration, f"downtime_{event.id}"))
+        
+        if intervals_on_this_machine:
+            model.AddNoOverlap(intervals_on_this_machine)
+    """
+
+    # --- FIX 4: ESSENTIAL FEATURE - DEADLINE CONSTRAINTS ---
+    all_orders = {task.production_order_id: task for task in tasks.values()}
+    for order_id, task in all_orders.items():
+        order = db_session.get(ProductionOrder, task.production_order_id)
+        if order and order.due_date:
+            last_step_key = jobs_map[order.order_id_code][-1]
+            deadline_offset = int((order.due_date - scheduling_anchor_time).total_seconds() // 60)
+
+            if deadline_offset > 0:
+                if last_step_key not in task_intervals:
+                    logging.error(f"Deadline constraint target {last_step_key} not found in task_intervals. Task may have been skipped.")
+                else:
+                    model.Add(task_intervals[last_step_key].EndExpr() <= deadline_offset)
+                    logging.info(f"Added deadline constraint for job {order.order_id_code} at minute {deadline_offset}.")
+
+
+    # --- OBJECTIVE & SOLVER ---
+    makespan = model.NewIntVar(0, horizon, 'makespan')
+    if task_intervals:
+        model.AddMaxEquality(makespan, [iv.EndExpr() for iv in task_intervals.values()])
+    model.Minimize(makespan)
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = BASE_SOLVER_TIMEOUT + (len(tasks) * TIMEOUT_PER_TASK)
+    status = solver.Solve(model)
+    status_name = solver.StatusName(status)
+
+    # --- EXTRACT RESULTS ---
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        schedule_output = []
+        for task_key, task_data in tasks.items():
+            if task_key not in task_intervals: continue
+            
+            assigned_machine_id = None
+            if task_data.is_fixed:
+                assigned_machine_id = task_data.assigned_machine_id
+            else:
+                for m_id in machine_type_to_ids.get(task_data.machine_type, []):
+                    if (task_key, m_id) in task_assignment_vars and solver.Value(task_assignment_vars[(task_key, m_id)]) == 1:
+                        assigned_machine_id = m_id
+                        break
+            
+            if assigned_machine_id is None: continue
+            
+            start_mins = solver.Value(task_intervals[task_key].StartExpr())
+            duration = solver.Value(task_intervals[task_key].SizeExpr())
+            
+            schedule_output.append({
+                "production_order_id": task_data.production_order_id,
+                "process_step_id": task_data.process_step_id,
+                "assigned_machine_id": assigned_machine_id,
+                "start_time": scheduling_anchor_time + timedelta(minutes=start_mins),
+                "end_time": scheduling_anchor_time + timedelta(minutes=start_mins + duration),
+                "scheduled_duration_mins": duration,
+                "status": "In Progress" if task_data.is_fixed else "Scheduled",
+                "job_id_code": task_data.job_id_code,
+                "step_number": task_data.step
+            })
+        schedule_output.sort(key=lambda x: x['start_time'])
+        return schedule_output, solver.Value(makespan), status_name
+    else:
+        logging.error(f"Scheduling failed with status: {status_name}. The system will not update the current schedule.")
+        return [], 0.0, status_name
+
+def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
+    """Atomically updates the schedule in the database."""
+    logging.info(f"Saving {len(scheduled_tasks_data)} tasks to the database...")
+    try:
+        # --- FIX 5: ROBUST DB SAVE LOGIC ---
+        # Get all existing schedulable tasks for potential deletion
+        existing_task_ids_to_delete = {
+            t.id for t in db.query(ScheduledTask.id).filter(ScheduledTask.status == 'Scheduled')
+        }
+        
+        newly_scheduled_po_ids = {t['production_order_id'] for t in scheduled_tasks_data if t['status'] == 'Scheduled'}
+        
+        for task_data in scheduled_tasks_data:
+            # Find the corresponding ScheduledTask object to update or create
+            # This logic assumes a 1-to-1 relationship between a PO's step and a ScheduledTask for simplicity
+            task_to_update = db.query(ScheduledTask).filter_by(
+                production_order_id=task_data['production_order_id'],
+                process_step_id=task_data['process_step_id']
+            ).first()
+
+            if task_to_update:
+                # This is an existing task (likely was 'In-Progress'), update its details
+                task_to_update.assigned_machine_id = task_data['assigned_machine_id']
+                task_to_update.start_time = task_data['start_time']
+                task_to_update.end_time = task_data['end_time']
+                task_to_update.scheduled_duration_mins = task_data['scheduled_duration_mins']
+                task_to_update.status = task_data['status']
+                if task_to_update.id in existing_task_ids_to_delete:
+                    existing_task_ids_to_delete.remove(task_to_update.id)
+            else:
+                # This is a new task to be scheduled
+                db.add(ScheduledTask(**task_data))
+
+        # Delete old 'Scheduled' tasks that were not part of the new schedule
+        if existing_task_ids_to_delete:
+            db.query(ScheduledTask).filter(ScheduledTask.id.in_(existing_task_ids_to_delete)).delete(synchronize_session=False)
+
+        # Update parent ProductionOrder statuses
+        for po_id in newly_scheduled_po_ids:
+            db.query(ProductionOrder).filter_by(id=po_id, current_status='Pending').update({'current_status': 'Scheduled'})
+
+        db.commit()
+        logging.info("Successfully committed new schedule to the database.")
     except Exception as e:
-        logging.error(f"Error during data loading or preparation for OR-Tools: {e}", exc_info=True)
+        logging.error(f"Database error during schedule save. Rolling back transaction.", exc_info=True)
+        db.rollback()
         raise
 
+
+def main():
+    """Main function to orchestrate the scheduling process."""
+    logging.info("Optimal (OR-Tools) Scheduler script started.")
+    db: Session = SessionLocal()
+    current_real_time_anchor = datetime.now()
+    
+    try:
+        all_tasks, job_to_tasks, machines_orm, downtime_events = load_and_prepare_data_for_ortools(db, current_real_time_anchor)
+        
+        if not all_tasks:
+            logging.info("No tasks to schedule. Exiting.")
+            return
+
+        optimal_schedule, makespan, status = schedule_with_ortools(
+            all_tasks, job_to_tasks, machines_orm, downtime_events, current_real_time_anchor, db, horizon=1000
+        )
+        
+        if optimal_schedule:
+            logging.info(f"Schedule found with status '{status}'. Makespan: {makespan / 60:.2f} hours")
+            save_scheduled_tasks_to_db(db, optimal_schedule)
+            pd.DataFrame(optimal_schedule).to_csv('optimal_schedule_output.csv', index=False)
+            logging.info("Detailed schedule saved to 'optimal_schedule_output.csv' for review.")
+        else:
+            logging.error(f"Scheduling did not yield a usable plan. Status: {status}. The existing schedule remains in effect.")
+            
+    except Exception as e:
+        logging.critical(f"A critical error occurred in the main scheduling process.", exc_info=True)
+    finally:
+        db.close()
+        logging.info("Scheduler script finished.")
+
+if __name__ == "__main__":
+    main()
 

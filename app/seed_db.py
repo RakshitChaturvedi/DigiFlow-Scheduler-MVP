@@ -8,13 +8,12 @@ from app.models import Machine, ProcessStep, ProductionOrder, ScheduledTask, Dow
 import datetime
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MOCK_DATA_PATH = os.path.join(BASE_DIR, 'mock_data')
-
-MACHINE_CSV = os.path.join(MOCK_DATA_PATH, 'machine_catalog_mock_data.csv')
-PROCESS_STEP_CSV = os.path.join(MOCK_DATA_PATH, 'process_route_mock_data.csv')
-PRODUCTION_ORDER_CSV = os.path.join(MOCK_DATA_PATH, 'production_job_schedule_mock_data.csv')
-DOWNTIME_EVENT_CSV = os.path.join(MOCK_DATA_PATH, 'downtime_events_mock_data.csv')
+from app.config import (
+    MACHINE_CSV,
+    PROCESS_STEP_CSV,
+    PRODUCTION_ORDER_CSV,
+    DOWNTIME_EVENT_CSV
+)
 
 def parse_datetime(dt_str):
     # Safely parses datetime strings from CSV, handling Nat/None

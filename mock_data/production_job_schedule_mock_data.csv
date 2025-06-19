@@ -1,10 +1,10 @@
-﻿order_id_code,product_route_id,quantity_to_produce,priority,arrival_time,product_name,due_date,current_status
-JOB20250609_01,Mold_1,1,1,01-06-2025 00:00,,,In Progress
-JOB20250609_02,Mold_2,15,2,01-06-2025 00:00,,,Pending
-JOB20250609_03,Mold_3,3,1,01-06-2025 05:00,,,Pending
-JOB20250609_04,Mold_4,2,2,01-06-2025 08:00,,,Pending
-JOB20250609_05,Mold_1,1,1,01-06-2025 18:00,,,In Progress
-JOB20250609_06,Mold_5,10,3,02-06-2025 01:00,,,Pending
-JOB20250609_07,Mold_6,5,2,02-06-2025 06:00,,,Pending
-JOB20250609_08,Mold_2,20,2,02-06-2025 16:00,,,Pending
-JOB20250609_09,Mold_1,1,1,02-06-2025 21:00,,,Pending
+﻿order_id_code,product_route_id,quantity_to_produce,priority,arrival_time,product_name,due_date,current_status,id
+JOB20250609_01,1,1,1,18-06-2025 00:00,,,Pending,1
+JOB20250609_02,2,15,2,18-06-2025 00:00,,,Pending,2
+JOB20250609_03,3,3,1,18-06-2025 05:00,,,Pending,3
+JOB20250609_04,4,2,2,18-06-2025 08:00,,,Pending,4
+JOB20250609_05,1,1,1,18-06-2025 18:00,,,Pending,5
+JOB20250609_06,5,10,3,19-06-2025 01:00,,,Pending,6
+JOB20250609_07,6,5,2,19-06-2025 06:00,,,Pending,7
+JOB20250609_08,2,20,2,19-06-2025 16:00,,,Pending,8
+JOB20250609_09,1,1,1,19-06-2025 19:00,,,Pending,9

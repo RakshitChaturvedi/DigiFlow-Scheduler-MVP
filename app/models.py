@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 import datetime
@@ -69,6 +69,8 @@ class ProductionOrder(Base):
     created_at = Column(DateTime, server_default=func.now()) # Timestamp when the record was created
     updated_at = Column(DateTime, onupdate=func.now(), default=func.now()) # Timestamp of last update
 
+    logs = relationship("JobLog", back_populates="production_order")
+
     # RELATIONSHIPS
     # A production order can have many scheduled tasks associated with its various steps
     scheduled_tasks = relationship("ScheduledTask", back_populates="production_order")
@@ -123,4 +125,25 @@ class DowntimeEvent(Base):
         return(f"<DowntimeEvent(id={self.id}, machine_id={self.machine_id}, "
                f"start = '{self.start_time.strftime('%Y-%m-%d %H:%M')}, reason = '{self.reason})>")
     
+class JobLog(Base):
+    __tablename__ = "job_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Foreign Keys to link this log to everything it describes
+    production_order_id = Column(Integer, ForeignKey("production_orders.id"), nullable=False)
+    process_step_id = Column(Integer, ForeignKey("process_steps.id"), nullable=False)
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=False)
+    # The most important columns: The actual times
+    actual_start_time = Column(DateTime(timezone=True), nullable=False)
+    actual_end_time = Column(DateTime(timezone=True), nullable=True) # Nullable because it's not set until the job is done
+
+    # Additional useful information
+    status = Column(String, default="completed") # e.g., 'completed', 'paused', 'aborted_issue'
+    remarks = Column(Text, nullable=True) # Any notes from the operator
+
+    # Relationships to access the full objects from a log entry
+    production_order = relationship("ProductionOrder", back_populates="logs")
+    process_step = relationship("ProcessStep")
+    machine = relationship("Machine")
     
