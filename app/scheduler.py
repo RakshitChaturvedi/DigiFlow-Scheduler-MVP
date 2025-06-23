@@ -1,7 +1,7 @@
 import collections
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, DefaultDict, Dict, List, Optional, Tuple, cast
 
@@ -34,6 +34,7 @@ class TaskData:
     # For schedulable tasks
     operation_duration: Optional[int] = None
     earliest_start_mins: Optional[int] = None
+    deadline_offset_mins: Optional[int] = None
 
 TaskIdentifier = Tuple[str, int] # (job_id_code, step_number)
 
@@ -89,9 +90,15 @@ def load_and_prepare_data_for_ortools(
         total_original_duration = int(setup_time + op_duration)
         
         all_tasks_for_solver[task_key] = TaskData(
-            production_order_id=order.id, job_id_code=order.order_id_code, step=log.step_number,
-            process_step_id=step_def.id, machine_type="", process_step_name=step_def.step_name,
-            is_fixed=True, start_offset_mins=start_offset, duration=total_original_duration,
+            production_order_id=order.id, 
+            job_id_code=order.order_id_code, 
+            step=log.step_number,
+            process_step_id=step_def.id, 
+            machine_type="", 
+            process_step_name=step_def.step_name,
+            is_fixed=True, 
+            start_offset_mins=start_offset, 
+            duration=total_original_duration,
             assigned_machine_id=log.machine_id
         )
         job_to_tasks[order.order_id_code].append(task_key)
@@ -106,6 +113,7 @@ def load_and_prepare_data_for_ortools(
         job_arrival = order.arrival_time or scheduling_anchor_time
         next_step_earliest_start = max(job_arrival, job_next_available_time.get(order_id_code, scheduling_anchor_time))
         start_offset_mins = max(0, int((next_step_earliest_start - scheduling_anchor_time).total_seconds() // 60))
+        deadline_offset = int((order.due_date - scheduling_anchor_time).total_seconds() // 60) if order.due_date else None
 
         if str(route_id) in process_steps_by_route:
             for step_num, step_data in sorted(process_steps_by_route[str(route_id)].items()):
@@ -125,11 +133,16 @@ def load_and_prepare_data_for_ortools(
 
 
                 all_tasks_for_solver[task_key] = TaskData(
-                    production_order_id=order.id, job_id_code=order_id_code, step=step_num,
-                    process_step_id=step_data.id, machine_type=step_data.required_machine_type,
-                    process_step_name=step_data.step_name, is_fixed=False,
+                    production_order_id=order.id, 
+                    job_id_code=order_id_code, 
+                    step=step_num,
+                    process_step_id=step_data.id, 
+                    machine_type=step_data.required_machine_type,
+                    process_step_name=step_data.step_name, 
+                    is_fixed=False,
                     operation_duration=op_duration,
-                    earliest_start_mins=start_offset_mins
+                    earliest_start_mins=start_offset_mins,
+                    deadline_offset_mins=deadline_offset
                 )
                 job_to_tasks[order_id_code].append(task_key)
                 print(f"[TASK ADDED] {task_key} → duration: {op_duration}")
@@ -151,7 +164,7 @@ def schedule_with_ortools(
     model = cp_model.CpModel()
     
     machine_instances = {cast(int, m.id): m for m in machines_orm}
-    machine_type_to_ids = collections.defaultdict(list)
+    machine_type_to_ids: DefaultDict[str, List[int]] = collections.defaultdict(list)
     for m in machines_orm:
         machine_type_to_ids[cast(str, m.machine_type)].append(cast(int, m.id))
 
@@ -361,19 +374,18 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
 
         # --- FIX 5: ROBUST DB SAVE LOGIC ---
         # Get all existing schedulable tasks for potential deletion
-        existing_task_ids_to_delete = {
-            t.id for t in db.query(ScheduledTask).filter(ScheduledTask.status == 'Scheduled').all()
+        existing_tasks_map = {
+            (t.production_order_id, t.process_step_id): t
+            for t in db.query(ScheduledTask).filter(ScheduledTask.status != 'Completed')
         }
         
-        newly_scheduled_po_ids = {t['production_order_id'] for t in scheduled_tasks_data if t['status'] == 'Scheduled'}
+        newly_scheduled_po_ids = set()
         
         for task_data in scheduled_tasks_data:
-            # Find the corresponding ScheduledTask object to update or create
-            # This logic assumes a 1-to-1 relationship between a PO's step and a ScheduledTask for simplicity
-            task_to_update = db.query(ScheduledTask).filter_by(
-                production_order_id=task_data['production_order_id'],
-                process_step_id=task_data['process_step_id']
-            ).first()
+            po_id = task_data['production_order_id']
+            ps_id = task_data['process_step_id']
+
+            task_to_update = existing_tasks_map.pop((po_id, ps_id), None)
 
             if task_to_update:
                 # This is an existing task (likely was 'In-Progress'), update its details
@@ -382,21 +394,26 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
                 task_to_update.end_time = task_data['end_time']
                 task_to_update.scheduled_duration_mins = task_data['scheduled_duration_mins']
                 task_to_update.status = task_data['status']
-                if task_to_update.id in existing_task_ids_to_delete:
-                    existing_task_ids_to_delete.remove(task_to_update.id)
             else:
                 # This is a new task to be scheduled
                 filtered_data = {k: v for k, v in task_data.items() if k in allowed_keys}
                 db.add(ScheduledTask(**filtered_data))
 
+            if task_data['status'] == 'Scheduled':
+                newly_scheduled_po_ids.add(po_id)
+
 
         # Delete old 'Scheduled' tasks that were not part of the new schedule
-        if existing_task_ids_to_delete:
-            db.query(ScheduledTask).filter(ScheduledTask.id.in_(existing_task_ids_to_delete)).delete(synchronize_session=False)
+        for old_task in existing_tasks_map.values():
+            if old_task.status == 'Scheduled':
+                db.delete(old_task)
 
         # Update parent ProductionOrder statuses
-        for po_id in newly_scheduled_po_ids:
-            db.query(ProductionOrder).filter_by(id=po_id, current_status='Pending').update({'current_status': 'Scheduled'})
+        if newly_scheduled_po_ids:
+            db.query(ProductionOrder).filter(
+                ProductionOrder.id.in_(newly_scheduled_po_ids),
+                ProductionOrder.current_status == 'Pending'
+            ).update({'current_status': 'Scheduled'}, synchronize_session=False)
 
         db.commit()
         logging.info("Successfully committed new schedule to the database.")
