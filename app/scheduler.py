@@ -159,7 +159,7 @@ def schedule_with_ortools(
     downtime_events: List[DowntimeEvent],
     scheduling_anchor_time: datetime,
     db_session: Session,
-    horizon: int
+    horizon_override: Optional[int] = None
 ) -> Tuple[List[Dict], float, str]:
     model = cp_model.CpModel()
     
@@ -168,7 +168,10 @@ def schedule_with_ortools(
     for m in machines_orm:
         machine_type_to_ids[cast(str, m.machine_type)].append(cast(int, m.id))
 
-    horizon = sum(t.duration or t.operation_duration or 0 for t in tasks.values()) + 2880 # 2-day buffer
+    if horizon_override:
+        horizon = horizon_override
+    else:
+        horizon = sum(t.duration or t.operation_duration or 0 for t in tasks.values()) + 2880 # 2-day buffer
 
     task_intervals: Dict[TaskIdentifier, cp_model.IntervalVar] = {}
     task_assignment_vars: Dict[Tuple[TaskIdentifier, int], cp_model.BoolVar] = {}
@@ -441,7 +444,7 @@ def main():
             print(f"{k}: duration={t.operation_duration}, quantity={orders[t.production_order_id].quantity_to_produce}")
 
         optimal_schedule, makespan, status = schedule_with_ortools(
-            all_tasks, job_to_tasks, machines_orm, downtime_events, current_real_time_anchor, db, horizon=1000
+            all_tasks, job_to_tasks, machines_orm, downtime_events, current_real_time_anchor, db
         )
         
         if optimal_schedule:
