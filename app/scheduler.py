@@ -2,7 +2,7 @@ import collections
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, DefaultDict, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
@@ -35,8 +35,16 @@ class TaskData:
     operation_duration: Optional[int] = None
     earliest_start_mins: Optional[int] = None
     deadline_offset_mins: Optional[int] = None
+    earliest_start_time_actual: Optional[datetime] = None
+    deadline_time_actual: Optional[datetime] = None
 
 TaskIdentifier = Tuple[str, int] # (job_id_code, step_number)
+
+def to_utc_aware(dt: datetime) -> datetime:
+    """Converts datetime to UTC-aware if it's naive, returns as is if already aware"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 def load_and_prepare_data_for_ortools(
     db: Session,
@@ -46,6 +54,7 @@ def load_and_prepare_data_for_ortools(
     Loads data, correctly handles in-progress tasks, and prepares data for OR-Tools.
     This is now robust and accounts for real-world states.
     """
+    scheduling_anchor_time = to_utc_aware(scheduling_anchor_time)
     logging.info("Loading and preparing data for OR-Tools...")
 
     active_machines = db.query(Machine).filter(Machine.is_active == True).all()
@@ -64,7 +73,17 @@ def load_and_prepare_data_for_ortools(
         JobLog.actual_start_time.isnot(None),
         JobLog.actual_end_time.is_(None)
     ).all()
-    future_downtime_events = db.query(DowntimeEvent).filter(DowntimeEvent.end_time > scheduling_anchor_time).all()
+
+    all_downtime_events_raw = db.query(DowntimeEvent).all()
+    future_downtime_events: List[DowntimeEvent] = []
+    for event in all_downtime_events_raw:
+        event_start_time_aware = to_utc_aware(event.start_time)
+        event_end_time_aware = to_utc_aware(event.end_time)
+
+        if event_end_time_aware > scheduling_anchor_time:
+            event.start_time = event_end_time_aware
+            event.end_time = event_end_time_aware
+            future_downtime_events.append(event)
 
     # --- Data preparation using lookup dictionaries for efficiency ---
     process_steps_by_route: DefaultDict[str, Dict[int, ProcessStep]] = collections.defaultdict(dict)
@@ -82,7 +101,8 @@ def load_and_prepare_data_for_ortools(
         if not step_def: continue
 
         task_key = (order.order_id_code, log.step_number)
-        start_offset = int((log.actual_start_time - scheduling_anchor_time).total_seconds() // 60)
+        actual_start_time_aware = to_utc_aware(log.actual_start_time)
+        start_offset = int((log.actual_start_time_aware - scheduling_anchor_time).total_seconds() // 60)
         
         # Estimate remaining duration based on original plan
         op_duration = int(cast(int, step_def.base_duration_per_unit_mins or 0)) * int((order.quantity_to_produce or 1))
@@ -110,10 +130,10 @@ def load_and_prepare_data_for_ortools(
         route_id = order.product_route_id
         
         # Determine the earliest this job can start its *next* schedulable step
-        job_arrival = order.arrival_time or scheduling_anchor_time
+        job_arrival = to_utc_aware(order.arrival_time) or scheduling_anchor_time
         next_step_earliest_start = max(job_arrival, job_next_available_time.get(order_id_code, scheduling_anchor_time))
         start_offset_mins = max(0, int((next_step_earliest_start - scheduling_anchor_time).total_seconds() // 60))
-        deadline_offset = int((order.due_date - scheduling_anchor_time).total_seconds() // 60) if order.due_date else None
+        deadline_offset = int((to_utc_aware(order.due_date) - scheduling_anchor_time).total_seconds() // 60) if order.due_date else None
 
         if str(route_id) in process_steps_by_route:
             for step_num, step_data in sorted(process_steps_by_route[str(route_id)].items()):
@@ -149,6 +169,7 @@ def load_and_prepare_data_for_ortools(
 
 
     logging.info(f"Prepared {len(all_tasks_for_solver)} tasks for OR-Tools scheduling.")
+
     return all_tasks_for_solver, job_to_tasks, active_machines, future_downtime_events
 
 

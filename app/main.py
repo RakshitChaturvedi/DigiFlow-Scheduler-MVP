@@ -15,12 +15,16 @@ from app.schemas import ScheduleRequest, ScheduledTaskResponse, ScheduleOutputRe
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__) # Use a logger specific to this module
 
+
+
 # Initialize the FastAPI application
 app = FastAPI(
     title= "Digiflow Scheduler API",
     description= "API for managing and optimizing production schedules.",
     version= "0.1.0"
 )
+
+
 
 # Define a simple root endpoint
 @app.get("/")
@@ -29,6 +33,8 @@ async def read_root():
     A simple root endpoint to confirm the API is running.
     """
     return {"message": "Welcome to Digiflow Scheduler API! It's running."}
+
+
 
 # Database dependency function
 def get_db_session(db: Session = Depends(get_db)):
@@ -41,10 +47,14 @@ def get_db_session(db: Session = Depends(get_db)):
     finally:
         db.close()
 
+
+
 # Healthcheck 
 @app.get("/healthcheck")
 def healthcheck():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 
 # --- Creating Scheduling API Endpoint, Call Scheduler Logic, Handle Output ---
 @app.post(
@@ -103,8 +113,8 @@ async def run_scheduler_api(
             # Convert raw list of dicts to Pydantic models for response
             scheduled_tasks_response = [
                 ScheduledTaskResponse(
-                    production_order_id = task['production_order_id'],
-                    process_step_id = task['process_step_id'],
+                    production_order_id = str(task['production_order_id']),
+                    process_step_id = str(task['process_step_id']),
                     assigned_machine_id = task['assigned_machine_id'],
                     start_time = task['start_time'],
                     end_time = task['end_time'],
