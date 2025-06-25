@@ -1,16 +1,16 @@
-machine_id_code,machine_name,machine_type,default_setup_time_mins,is_active,default_setup_time_mins,id
-M001,CNC Mill 1,VMC,60,TRUE,60,1
-M002,CNC Mill 2,VMC,60,TRUE,60,2
-M003,CNC Mill 3,HMC,90,TRUE,90,3
-M004,CNC Mill 4,HMC,90,TRUE,90,4
-M005,CNC Mill 5,5-Axis CNC Mill,120,TRUE,120,5
-M006,CNC Mill 6,3-Axis CNC Mill,50,TRUE,50,6
-M007,EDM Sink 1,Sinker EDM,45,TRUE,45,7
-M008,EDM Sink 2,Sinker EDM,45,TRUE,45,8
-M009,EDM Wire 1,Wire EDM,60,TRUE,60,9
-M010,Surface Grinder 1,Surface Grinder,30,TRUE,30,10
-M011,Cylindrical Grinder 1,Cylindrical Grinder,40,TRUE,40,11
-M012,Drill Press 1,Manual Drill Press,15,TRUE,15,12
-M013,Drill Press 2,Radial Drill Press,20,TRUE,20,13
-M014,Lathe 1,CNC Lathe,45,TRUE,45,14
-M015,Lathe 2,Manual Lathe,30,TRUE,30,15
+machine_id_code,machine_name,machine_type,default_setup_time_mins,is_active,id
+M001,CNC Mill 1,VMC,60,TRUE,1
+M002,CNC Mill 2,VMC,60,TRUE,2
+M003,CNC Mill 3,HMC,90,TRUE,3
+M004,CNC Mill 4,HMC,90,TRUE,4
+M005,CNC Mill 5,5-Axis CNC Mill,120,TRUE,5
+M006,CNC Mill 6,3-Axis CNC Mill,50,TRUE,6
+M007,EDM Sink 1,Sinker EDM,45,TRUE,7
+M008,EDM Sink 2,Sinker EDM,45,TRUE,8
+M009,EDM Wire 1,Wire EDM,60,TRUE,9
+M010,Surface Grinder 1,Surface Grinder,30,TRUE,10
+M011,Cylindrical Grinder 1,Cylindrical Grinder,40,TRUE,11
+M012,Drill Press 1,Manual Drill Press,15,TRUE,12
+M013,Drill Press 2,Radial Drill Press,20,TRUE,13
+M014,Lathe 1,CNC Lathe,45,TRUE,14
+M015,Lathe 2,Manual Lathe,30,TRUE,15

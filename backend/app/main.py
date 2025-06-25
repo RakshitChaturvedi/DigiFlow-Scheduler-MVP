@@ -9,7 +9,8 @@ from backend.app.scheduler import(
     schedule_with_ortools,
     save_scheduled_tasks_to_db
 )
-from app.schemas import ScheduleRequest, ScheduledTaskResponse, ScheduleOutputResponse
+from backend.app.schemas import ScheduleRequest, ScheduledTaskResponse, ScheduleOutputResponse
+from backend.app.routes import router as crud_router
 
 # Configure logging for the main API file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -24,7 +25,7 @@ app = FastAPI(
     version= "0.1.0"
 )
 
-
+app.include_router(crud_router)
 
 # Define a simple root endpoint
 @app.get("/")

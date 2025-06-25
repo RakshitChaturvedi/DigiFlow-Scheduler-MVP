@@ -107,6 +107,11 @@ def seed_data():
         print("Seeding ProductionOrder data...")
         for index, row in production_orders_df.iterrows():
             due_date=None
+
+            if pd.isna(row['order_id_code']) or str(row['order_id_code']).strip().lower() == 'nan':
+                print(f"Skipping row {index} due to invalid order_id_code: {row['order_id_code']}")
+                continue
+
             # convert string dates to datetime objects
             if pd.notna(row['due_date']):
                 due_date = datetime.datetime.strptime(str(row['due_date']), '%Y-%m-%d %H:%M:%S') # Assuming YYYY-MM-DD HH:MM:SS
