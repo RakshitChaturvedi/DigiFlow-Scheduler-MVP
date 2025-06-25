@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ConfigDict
 from typing import List, Optional
 from datetime import datetime, timezone
 
@@ -95,6 +95,18 @@ class ProductionOrderBase(BaseModel):
         if v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)
         return v.astimezone(timezone.utc)
+    
+    @field_validator("quantity_to_produce")
+    def quantity_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError("quantity_to_produce must be a positive integer")
+        return v
+    
+    @ field_validator("due_date")
+    def due_date_must_be_after_arrival(cls, v, values):
+        if v and 'arrival_time' in values.data and v < values.data['arrival_time']:
+            raise ValueError('due_date must be on or after arrival_time')
+        return v
 
 class ProductionOrderCreate(ProductionOrderBase): pass
 class ProductionOrderUpdate(BaseModel): # Partial
@@ -119,8 +131,7 @@ class ProductionOrderUpdate(BaseModel): # Partial
 
 class ProductionOrderOut(ProductionOrderBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Process Steps ---
@@ -131,6 +142,12 @@ class ProcessStepBase(BaseModel):
     required_machine_type: str
     base_duration_per_unit_mins: int
 
+    @field_validator("step_number", "base_duration_per_unit_mins")
+    def values_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError("step_number and base_duration_per_mins must be positive")
+        return v
+
 class ProcessStepCreate(ProcessStepBase): pass
 class ProcessStepUpdate(BaseModel):
     step_name: Optional[str] = None
@@ -139,15 +156,20 @@ class ProcessStepUpdate(BaseModel):
 
 class ProcessStepOut(ProcessStepBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Machine ---
 class MachineBase(BaseModel):
     machine_id_code: str
     machine_type: str
     default_setup_time_mins: int
-    is_active: bool
+    is_active: bool = True
+
+    @field_validator("default_setup_time_mins")
+    def setup_time_cannot_be_negative(cls, v):
+        if v < 0:
+            raise ValueError("default_setup_time_mins cannot be negative")
+        return v
 
 class MachineCreate(MachineBase): pass
 class MachineUpdate(BaseModel):
@@ -157,8 +179,7 @@ class MachineUpdate(BaseModel):
 
 class MachineOut(MachineBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Downtime Events ---
 class DowntimeEventBase(BaseModel):
@@ -178,6 +199,12 @@ class DowntimeEventBase(BaseModel):
             return v.replace(tzinfo=timezone.utc)
         return v.astimezone(timezone.utc)
     
+    @field_validator('end_time')
+    def end_time_must_be_after_start_time(cls, v, values):
+        if 'start_time' in values.data and v <= values.data['start_time']:
+            raise ValueError('end_time must be after start_time')
+        return v
+    
 class DowntimeEventCreate(DowntimeEventBase): pass
 class DowntimeEventUpdate(BaseModel):
     start_time: Optional[datetime] = None
@@ -186,6 +213,5 @@ class DowntimeEventUpdate(BaseModel):
 
 class DowntimeEventOut(DowntimeEventBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 

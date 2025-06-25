@@ -18,7 +18,7 @@ def test_create_production_order():
         "current_status": "PENDING"
     }
     response = client.post("/api/orders/", json=payload)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["order_id_code"] == payload["order_id_code"]
 
@@ -38,7 +38,7 @@ def test_update_production_order():
         "due_date": "2025-07-03T10:00:00Z",
         "current_status": "Pending"
     })
-    assert create_resp.status_code == 200
+    assert create_resp.status_code == 201
     order_id = create_resp.json()["id"]
 
     update_resp = client.put(f"/api/orders/{order_id}", json={"product_name": "UpdatedName"})
@@ -60,8 +60,7 @@ def test_delete_production_order():
     order_id = create_resp.json()["id"]
 
     delete_resp = client.delete(f"/api/orders/{order_id}")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["detail"] == "Production order deleted"
+    assert delete_resp.status_code == 204
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- PROCESS STEPS ---
@@ -74,7 +73,7 @@ def test_create_process_step():
         "base_duration_per_unit_mins": 5
     }
     response = client.post("/api/steps/", json=payload)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["product_route_id"] == payload["product_route_id"]
     assert data["step_number"] == payload["step_number"]
@@ -109,8 +108,7 @@ def test_delete_process_step():
     step_id = create_resp.json()["id"]
 
     delete_resp = client.delete(f"/api/steps/{step_id}")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["detail"] == "Process step deleted"
+    assert delete_resp.status_code == 204
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- MACHINES ---
@@ -122,7 +120,7 @@ def test_create_machine():
         "is_active": True
     }
     response = client.post("/api/machines/", json=payload)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["machine_id_code"] == payload["machine_id_code"]
 
@@ -157,8 +155,7 @@ def test_delete_machine():
     machine_id = create_resp.json()["id"]
 
     delete_resp = client.delete(f"/api/machines/{machine_id}")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["detail"] == "Machine deleted"
+    assert delete_resp.status_code == 204
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- DOWNTIME EVENTS ---
@@ -170,7 +167,7 @@ def test_create_downtime_event():
         "default_setup_time_mins": 5,
         "is_active": True
     })
-    assert machine_resp.status_code == 200
+    assert machine_resp.status_code == 201
     machine_id = machine_resp.json()["id"]
 
     payload = {
@@ -180,7 +177,7 @@ def test_create_downtime_event():
         "reason": "Test Downtime"
     }
     response = client.post("/api/downtimes/", json=payload)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["machine_id"] == payload["machine_id"]
     assert data["reason"] == payload["reason"]
@@ -233,5 +230,4 @@ def test_delete_downtime_event():
     event_id = create_resp.json()["id"]
 
     delete_resp = client.delete(f"/api/downtimes/{event_id}")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["detail"] == "Downtime event deleted"
+    assert delete_resp.status_code == 204
