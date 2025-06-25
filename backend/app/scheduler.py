@@ -10,9 +10,9 @@ from ortools.sat.python import cp_model
 from sqlalchemy.orm import Session
 
 # Assuming these are defined in app/config.py
-from app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK
-from app.database import SessionLocal
-from app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
+from backend.app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK
+from backend.app.database import SessionLocal
+from backend.app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -384,18 +384,18 @@ def schedule_with_ortools(
 def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
     """Atomically updates the schedule in the database."""
     logging.info(f"Saving {len(scheduled_tasks_data)} tasks to the database...")
+
+    allowed_keys = {
+        'production_order_id',
+        'process_step_id',
+        'assigned_machine_id',
+        'start_time',
+        'end_time',
+        'scheduled_duration_mins',
+        'status'
+    }
+
     try:
-
-        allowed_keys = {
-            'production_order_id',
-            'process_step_id',
-            'assigned_machine_id',
-            'start_time',
-            'end_time',
-            'scheduled_duration_mins',
-            'status'
-        }
-
         # --- FIX 5: ROBUST DB SAVE LOGIC ---
         # Get all existing schedulable tasks for potential deletion
         existing_tasks_map = {
@@ -441,9 +441,10 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
 
         db.commit()
         logging.info("Successfully committed new schedule to the database.")
+
     except Exception as e:
-        logging.error(f"Database error during schedule save. Rolling back transaction.", exc_info=True)
         db.rollback()
+        logging.error(f"Database error during schedule save. Rolling back transaction.", exc_info=True)
         raise
 
 
@@ -451,7 +452,7 @@ def main():
     """Main function to orchestrate the scheduling process."""
     logging.info("Optimal (OR-Tools) Scheduler script started.")
     db: Session = SessionLocal()
-    current_real_time_anchor = datetime.now()
+    current_real_time_anchor = datetime.now(timezone.utc)
     
     try:
         all_tasks, job_to_tasks, machines_orm, downtime_events = load_and_prepare_data_for_ortools(db, current_real_time_anchor)

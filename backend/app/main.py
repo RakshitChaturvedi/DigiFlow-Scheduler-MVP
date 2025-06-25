@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import logging
 
-from app.database import get_db
-from app.scheduler import(
+from backend.app.database import get_db
+from backend.app.scheduler import(
     load_and_prepare_data_for_ortools,
     schedule_with_ortools,
     save_scheduled_tasks_to_db
@@ -61,9 +61,9 @@ def healthcheck():
     "/schedule",
     response_model=ScheduleOutputResponse,
     summary="Trigger a new production schedule calculation",
-    description="Loads data from the database, runs the OR-Tools scheduler, and saved the optimal schedule back to the database. Returns to scheduling result."
+    description="Loads data from the database, runs the OR-Tools scheduler, and saves the optimal schedule back to the database. Returns to scheduling result."
 )
-async def run_scheduler_api(
+async def run_scheduler_endpoint(
     request_data: ScheduleRequest, # Receives the JSON request body, validated by ScheduleRequest Pydantic model
     db: Session = Depends(get_db_session) # Injects the database session
 ):
@@ -103,46 +103,53 @@ async def run_scheduler_api(
                 db
             )
         
-        # 2.4.2 Call Scheduler Logic - Step 3: Save results to the database if successful
-        if optimal_schedule_raw:
-            logger.info(f"Scheduler completed with status '{status_str}', Makespan: {makespan_mins / 60:.2f} hours.")
-            save_scheduled_tasks_to_db(db, optimal_schedule_raw)
-            logger.info("Optimal schedule saved to database.")
-
-            # 2.4.5 Handle Scheduler Output and Return Response
-            # Convert raw list of dicts to Pydantic models for response
-            scheduled_tasks_response = [
-                ScheduledTaskResponse(
-                    production_order_id = str(task['production_order_id']),
-                    process_step_id = str(task['process_step_id']),
-                    assigned_machine_id = task['assigned_machine_id'],
-                    start_time = task['start_time'],
-                    end_time = task['end_time'],
-                    scheduled_duration_mins = task['scheduled_duration_mins'],
-                    status = task['status'],
-                    job_id_code = task['job_id_code'],
-                    step_number = task['step_number']
-                ) for task in optimal_schedule_raw
-            ]
-
-            return ScheduleOutputResponse(
-                status=status_str,
-                makespan_minutes= makespan_mins,
-                scheduled_tasks = scheduled_tasks_response,
-                message="Schedule generated and saved successfully."
-            )
-        else:
-            logger.warning(f"Scheduling did not yield a usable plan. Status: {status_str}. No new schedule saved.")
-            return ScheduleOutputResponse(
-                status=status_str,
-                makespan_minutes=makespan_mins,
-                scheduled_tasks=[],
-                message="Scheduling failed or yielded an infeasible plan. No new schedule saved."
-            )
-        
     except Exception as e:
         logger.exception(f"An unexpected error occurred during scheduling API call: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail = f"An internal server error occured during scheduling: {e}"
         )
+    
+    if optimal_schedule_raw:
+        # 2.4.2 Call Scheduler Logic - Step 3: Save results to the database if successful
+        logger.info(f"Scheduler completed with status '{status_str}', Makespan: {makespan_mins / 60:.2f} hours.")
+
+        try:
+            save_scheduled_tasks_to_db(db, optimal_schedule_raw)
+        except ValueError as ve:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(ve))
+        
+        logger.info("Optimal schedule saved to database.")
+
+        # 2.4.5 Handle Scheduler Output and Return Response
+        # Convert raw list of dicts to Pydantic models for response
+        scheduled_tasks_response = [
+            ScheduledTaskResponse(
+                production_order_id = str(task['production_order_id']),
+                process_step_id = str(task['process_step_id']),
+                assigned_machine_id = task['assigned_machine_id'],
+                start_time = task['start_time'],
+                end_time = task['end_time'],
+                scheduled_duration_mins = task['scheduled_duration_mins'],
+                status = task['status'],
+                job_id_code = task['job_id_code'],
+                step_number = task['step_number']
+            ) 
+            for task in optimal_schedule_raw
+        ]
+
+        return ScheduleOutputResponse(
+            status=status_str,
+            makespan_minutes= makespan_mins,
+            scheduled_tasks = scheduled_tasks_response,
+            message="Schedule generated and saved successfully."
+        )
+    else:
+        logger.warning(f"Scheduling did not yield a usable plan. Status: {status_str}. No new schedule saved.")
+        return ScheduleOutputResponse(
+            status=status_str,
+            makespan_minutes=makespan_mins,
+            scheduled_tasks=[],
+            message="Scheduling failed or yielded an infeasible plan. No new schedule saved."
+        )    

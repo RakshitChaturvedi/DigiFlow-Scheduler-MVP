@@ -1,5 +1,5 @@
-from app.database import SessionLocal
-from app.scheduler import (
+from backend.app.database import SessionLocal
+from backend.app.scheduler import (
     load_and_prepare_data_for_ortools,
     schedule_with_ortools,
     save_scheduled_tasks_to_db
@@ -27,8 +27,7 @@ def run_scheduler_on_real_db():
             machines_orm=machines,
             downtime_events=downtimes,
             scheduling_anchor_time=anchor_time,
-            db_session=db,
-            horizon=10080
+            db_session=db
         )
 
         print(f"Solver status: {status}, Makespan: {makespan / 60:.2f} hrs")

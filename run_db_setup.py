@@ -3,8 +3,8 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
-from app.database import create_tables
-from app.config import DATABASE_URL
+from backend.app.database import create_tables
+from backend.app.config import DATABASE_URL
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

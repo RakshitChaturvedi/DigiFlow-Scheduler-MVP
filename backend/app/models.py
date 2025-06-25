@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base, relationship, Session
 from sqlalchemy.sql import func
+from sqlalchemy import event
+
 import datetime
 
 Base = declarative_base()
@@ -146,4 +148,57 @@ class JobLog(Base):
     production_order = relationship("ProductionOrder", back_populates="logs")
     process_step = relationship("ProcessStep")
     machine = relationship("Machine")
+
+
+@event.listens_for(Session, "before_flush")
+def validate_uniqueness_before_flush(session, flush_context, instances):
+    # Check for newly added objects (INSERTS)
+    for obj in session.new:
+        if isinstance(obj, ProductionOrder):
+            existing = session.query(ProductionOrder).filter(
+                ProductionOrder.order_id_code == obj.order_id_code
+            ).first()
+            if existing:
+                raise ValueError(f"Duplicate ProductionOrder.order_id_code: '{obj.order_id_code}' already exists.")
+            
+        if isinstance(obj, Machine):
+            existing = session.query(Machine).filter(
+                Machine.machine_id_code == obj.machine_id_code
+            ).first()
+            if existing:
+                raise ValueError(f"Duplicate Machine.machine_id_code: '{obj.machine_id_code}' already exists.")
+
+        if isinstance(obj, ProcessStep):
+            existing = session.query(ProcessStep).filter(
+                ProcessStep.product_route_id == obj.product_route_id,
+                ProcessStep.step_number == obj.step_number
+            ).first()
+            if existing:
+                raise ValueError(f"Duplicate ProcessStep: A step with route '{obj.product_route_id}' and step number '{obj.step_number}' already exists.")
     
+    # Check for modified objects (UPDATES) where unique fields might have changed
+    for obj in session.dirty:
+        if isinstance(obj, ProductionOrder) and session.is_modified(obj, changed_fields={'order_id_code'}):
+            existing = session.query(ProductionOrder).filter(
+                ProductionOrder.order_id_code == obj.order_id_code,
+                ProductionOrder.id != obj.id # Crucial: Exclude the current object being updated
+            ).first()
+            if existing:
+                raise ValueError(f"Duplicate ProductionOrder.order_id_code: '{obj.order_id_code}' already exists in another record.")
+            
+        if isinstance(obj, Machine) and session.is_modified(obj, changed_fields={'machine_id_code'}):
+            existing = session.query(Machine).filter(
+                Machine.machine_id_code == obj.machine_id_code,
+                Machine.id != obj.id # Crucial: Exclude the current object being updated
+            ).first()
+            if existing:
+                raise ValueError(f"Duplicate Machine.machine_id_code: '{obj.machine_id_code}' already exists in another record.")            
+        
+        if isinstance(obj, ProcessStep) and (session.is_modified(obj, changed_fields={'product_route_id'}) or session.is_modified(obj, changed_fields={'step_number'})):
+            existing = session.query(ProcessStep).filter(
+                ProcessStep.product_route_id == obj.product_route_id,
+                ProcessStep.step_number == obj.step_number,
+                ProcessStep.id != obj.id # Crucial: Exclude the current object being updated
+            ).first()
+            if existing:
+                raise ValueError(f"Duplicate ProcessStep: A step with route '{obj.product_route_id}' and step number '{obj.step_number}' already exists in another record.")

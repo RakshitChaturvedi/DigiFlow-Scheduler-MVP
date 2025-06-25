@@ -1,14 +1,17 @@
 import pandas as pd
 import numpy as np
 import random
+
 from sqlalchemy.orm.session import Session
 from sqlalchemy import inspect
-from app.database import SessionLocal, engine, Base
-from app.models import Machine, ProcessStep, ProductionOrder, ScheduledTask, DowntimeEvent
+
+from backend.app.database import SessionLocal, engine, Base
+from backend.app.models import Machine, ProcessStep, ProductionOrder, ScheduledTask, DowntimeEvent
+
 import datetime
 import os
 
-from app.config import (
+from backend.app.config import (
     MACHINE_CSV,
     PROCESS_STEP_CSV,
     PRODUCTION_ORDER_CSV,
@@ -90,7 +93,7 @@ def seed_data():
         print("Seeding ProcessStep data...")
         for index, row in process_steps_df.iterrows():
             process_step = ProcessStep(
-                product_route_id = row['product_route_id'],
+                product_route_id = str(row['product_route_id']),
                 step_number = row['step_number'],
                 step_name = row['step_name'],
                 required_machine_type = row['required_machine_type'],
@@ -117,7 +120,7 @@ def seed_data():
             order = ProductionOrder(
                 order_id_code = row['order_id_code'],
                 product_name = row['product_name'],
-                product_route_id = row['product_route_id'],
+                product_route_id = str(row['product_route_id']),
                 quantity_to_produce = row['quantity_to_produce'],
                 priority = row['priority'],
                 arrival_time = arrival_time,
@@ -140,7 +143,9 @@ def seed_data():
         order_code_to_id_map = {po.order_id_code: po.id for po in production_orders}
 
         process_steps = db.query(ProcessStep).all()
-        process_step_lookup = {(ps.product_route_id, ps.step_number): ps.id for ps in process_steps}
+        process_step_lookup = {
+            (ps.product_route_id, ps.step_number): ps.id for ps in process_steps
+        }
 
         # 6. Seed Downtime Events
         print("Seeding Downtime Events from CSV...")
