@@ -1,14 +1,15 @@
 import enum
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from typing import List, Type, TypeVar, Union
+from typing import List, Type, TypeVar, Union, Optional
 
 from backend.app import models, schemas
 from backend.app.models import ProductionOrder, ProcessStep, Machine, DowntimeEvent, ScheduledTask, JobLog
 from backend.app.schemas import (ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut,
                                  ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
                                  MachineCreate, MachineUpdate, MachineOut,
-                                 DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut)
+                                 DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut,
+                                 JobLogCreate, JobLogUpdate, JobLogOut)
 from backend.app.enums import OrderStatus, JobLogStatus
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
 
@@ -108,6 +109,31 @@ def update_downtime_event(db: Session, db_obj: models.DowntimeEvent, event_updat
     return db_obj
 
 def delete_downtime_event(db: Session, db_obj: models.DowntimeEvent):
+    db.delete(db_obj)
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- JOB LOGS ---
+
+def create_job_log(db: Session, job_log_data: schemas.JobLogCreate) -> models.JobLog:
+    db_job_log = models.JobLog(**job_log_data.model_dump())
+    db.add(db_job_log)
+    return db_job_log
+
+def get_job_log(db:Session, job_log_id: int) -> Optional[models.JobLog]:
+    return db.query(models.JobLog).filter(models.JobLog.id == job_log_id).first()
+
+def get_all_job_logs(db: Session) -> List[models.JobLog]:
+    return db.query(models.JobLog).all()
+
+def update_job_log(db: Session, db_obj: models.JobLog, job_log_update: schemas.JobLogUpdate) -> models.JobLog:
+    update_data = job_log_update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        # Handle specific field updates or transformations if necessary
+        setattr(db_obj, field, value)
+    db.add(db_obj)
+    return db_obj
+
+def delete_job_log(db: Session, db_obj: models.JobLog):
     db.delete(db_obj)
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------

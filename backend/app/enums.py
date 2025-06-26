@@ -7,6 +7,13 @@ class OrderStatus(str, Enum):
     COMPLETED = "Completed"
     CANCELLED = "Cancelled"
 
+class ScheduledTaskStatus(str, Enum):
+    PENDING = "Pending"
+    SCHEDULED = "Scheduled"
+    IN_PROGRESS = "In Progress"
+    COMPLETED = "Completed"
+    CANCELLED = "Cancelled"
+
 class JobLogStatus(str, Enum):
     PENDING = "Pending" # A job log created but not yet scheduled/started
     SCHEDULED = "Scheduled"

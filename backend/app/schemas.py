@@ -215,6 +215,84 @@ class DowntimeEventOut(DowntimeEventBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
 
+# --- Job Logs ---
+class JobLogBase(BaseModel):
+    # Fixed: Removed Field(...) for required fields to avoid Pylance redeclaration warning
+    production_order_id: Optional[int] = Field(None)
+    process_step_id: Optional[int] = Field(None)
+    machine_id: Optional[int] = Field(None)
+    actual_start_time: Optional[datetime] = Field(None)
+    actual_end_time: Optional[datetime] = Field(None) # Keep Field(None) for optional defaults
+    remarks: Optional[str] = Field(None) # Keep Field(None) for optional defaults
+
+    @field_validator("actual_start_time", "actual_end_time", mode="before")
+    @classmethod
+    def ensure_utc_joblog(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v=datetime.fromisoformat(v)
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
+    
+    @field_validator('actual_end_time')
+    def end_time_must_be_after_start_time_joblog(cls, v, info):
+        if 'actual_start_time' in info.data and v is not None and info.data['actual_start_time'] is not None and v <= info.data['actual_start_time']:
+            raise ValueError('actual_end_time must be after actual_start_time')
+        return v
+
+class JobLogCreate(JobLogBase):
+    status: JobLogStatus = JobLogStatus.PENDING # Default status for creation, but can be overridden
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "production_order_id": 1,
+                    "process_step_id": 1,
+                    "machine_id": 1,
+                    "actual_start_time": "2025-07-01T10:00:00Z",
+                    "actual_end_time": "2025-07-01T11:00:00Z",
+                    "status": "In Progress",
+                    "remarks": "Started operation X"
+                }
+            ]
+        }
+    )
+
+class JobLogUpdate(BaseModel):
+    # Fixed: Removed Field(...) for optional fields without specific metadata
+    production_order_id: Optional[int] = None
+    process_step_id: Optional[int] = None
+    machine_id: Optional[int] = None
+    actual_start_time: Optional[datetime] = None
+    actual_end_time: Optional[datetime] = None
+    status: Optional[JobLogStatus] = None
+    remarks: Optional[str] = None
+
+    @field_validator("actual_start_time", "actual_end_time", mode="before")
+    @classmethod
+    def ensure_utc_joblog_update(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v=datetime.fromisoformat(v)
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
+    
+    @field_validator('actual_end_time')
+    def end_time_must_be_after_start_time_joblog_update(cls, v, info):
+        if 'actual_start_time' in info.data and v is not None and info.data['actual_start_time'] is not None and v <= info.data['actual_start_time']:
+            raise ValueError('actual_end_time must be after actual_start_time')
+        return v
+
+class JobLogOut(JobLogBase):
+    id: int
+    status: JobLogStatus
+    model_config = ConfigDict(from_attributes=True)
+
 # --- STATUSES ---
 
 class ProductionOrderStatusUpdate(BaseModel):
@@ -240,18 +318,4 @@ class JobLogStatusUpdate(BaseModel):
                 {"new_status": "Failed"}
             ]
         }
-    }
-
-class JobLogOut(BaseModel):
-    id: int
-    production_order_id: int
-    process_step_id: int
-    machine_id: int
-    actual_start_time: datetime
-    actual_end_time: Optional[datetime] = None
-    status: JobLogStatus
-    remarks: Optional[str] = None
-
-    model_config= {
-        'from_attributes': True
     }

@@ -7,12 +7,17 @@ from typing import Any, DefaultDict, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 from ortools.sat.python import cp_model
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 # Assuming these are defined in app/config.py
 from backend.app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK
 from backend.app.database import SessionLocal
 from backend.app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
+from backend.app.schemas import ProductionOrderOut, ScheduledTaskResponse
+from backend.app.enums import JobLogStatus, OrderStatus
+
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -65,7 +70,11 @@ def load_and_prepare_data_for_ortools(
     # --- FIX 1: DYNAMIC & CORRECT JOB POOL SELECTION ---
     # Fetch orders that are not yet fully completed.
     production_orders_orm = db.query(ProductionOrder).filter(
-        ProductionOrder.current_status.in_(['Pending', 'Queued', 'In-Progress'])
+        ProductionOrder.current_status.in_([
+            OrderStatus.PENDING.value,
+            OrderStatus.SCHEDULED.value,
+            OrderStatus.IN_PROGRESS.value
+        ])
     ).all()
 
     # --- FIX 2: ROBUST IN-PROGRESS & DOWNTIME HANDLING ---
@@ -267,56 +276,6 @@ def schedule_with_ortools(
                 interval = model.NewFixedSizeIntervalVar(start_offset, duration, f"downtime_{event.id}")
                 intervals_on_specific_machine[mid].append(interval)
 
-    """
-    for machine_id, machine in machine_instances.items():
-        intervals_on_this_machine = []
-        for task_key, task_data in tasks.items():
-            if task_data.is_fixed:
-                if task_data.assigned_machine_id == machine_id:
-                    intervals_on_this_machine.append(task_intervals[task_key])
-            elif (task_key, machine_id) in task_assignment_vars:
-                assign_var = task_assignment_vars[(task_key, machine_id)]
-                
-                # --- FIX 3: MACHINE-SPECIFIC SETUP TIME ---
-                setup_time = machine.default_setup_time_mins or 0
-                actual_op_duration = cast(int, task_data.operation_duration)
-                
-                duration_with_setup_val = actual_op_duration + setup_time
-                duration_with_setup_var = model.NewIntVar(
-                    duration_with_setup_val,
-                    duration_with_setup_val,
-                    f"duration_{task_key}_on_m{machine_id}_with_setup"
-                )
-                
-                duration_for_opt_interval = model.NewIntVar(
-                    actual_op_duration,
-                    actual_op_duration,
-                    f"duration_{task_key}_on_m{machine_id}_NO_SETUP"
-                )
-                
-                opt_interval = model.NewOptionalIntervalVar(
-                    start = task_intervals[task_key].StartExpr(), 
-                    end=task_intervals[task_key].EndExpr(), 
-                    size=duration_with_setup_var, 
-                    is_present=assign_var, 
-                    name= f"opt_{task_key}_on_{machine_id}"
-                )
-                intervals_on_this_machine.append(opt_interval)
-                # Link the main task's duration to this choice
-                model.Add(task_intervals[task_key].EndExpr() == opt_interval.EndExpr()).OnlyEnforceIf(assign_var)
-        
-        # Add downtime events for this machine
-        for event in downtime_events:
-            if event.machine_id == machine_id:
-                start_offset = max(0, int((event.start_time - scheduling_anchor_time).total_seconds() // 60))
-                duration = int((event.end_time - event.start_time).total_seconds() // 60)
-                if duration > 0:
-                    intervals_on_this_machine.append(model.NewFixedSizeIntervalVar(start_offset, duration, f"downtime_{event.id}"))
-        
-        if intervals_on_this_machine:
-            model.AddNoOverlap(intervals_on_this_machine)
-    """
-
     # --- FIX 4: ESSENTIAL FEATURE - DEADLINE CONSTRAINTS ---
     all_orders = {task.production_order_id: task for task in tasks.values()}
     for order_id, task in all_orders.items():
@@ -381,11 +340,11 @@ def schedule_with_ortools(
         logging.error(f"Scheduling failed with status: {status_name}. The system will not update the current schedule.")
         return [], 0.0, status_name
 
-def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
+def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) -> List[ScheduledTask]:
     """Atomically updates the schedule in the database."""
     logging.info(f"Saving {len(scheduled_tasks_data)} tasks to the database...")
 
-    allowed_keys = {
+    scheduled_task_allowed_keys = {
         'production_order_id',
         'process_step_id',
         'assigned_machine_id',
@@ -395,12 +354,14 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
         'status'
     }
 
+    persisted_scheduled_tasks: List[ScheduledTask] = []
+
     try:
         # --- FIX 5: ROBUST DB SAVE LOGIC ---
         # Get all existing schedulable tasks for potential deletion
-        existing_tasks_map = {
+        existing_scheduled_tasks_map = {
             (t.production_order_id, t.process_step_id): t
-            for t in db.query(ScheduledTask).filter(ScheduledTask.status != 'Completed')
+            for t in db.query(ScheduledTask).filter(ScheduledTask.status == 'Scheduled').all()
         }
         
         newly_scheduled_po_ids = set()
@@ -408,43 +369,86 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]):
         for task_data in scheduled_tasks_data:
             po_id = task_data['production_order_id']
             ps_id = task_data['process_step_id']
+            machine_id = task_data['assigned_machine_id']
 
-            task_to_update = existing_tasks_map.pop((po_id, ps_id), None)
+            newly_scheduled_po_ids.add(po_id)
 
-            if task_to_update:
+            scheduled_task_key = {po_id, ps_id, machine_id}
+            task_obj = existing_scheduled_tasks_map.pop(scheduled_task_key, None)
+
+            if task_obj:
                 # This is an existing task (likely was 'In-Progress'), update its details
-                task_to_update.assigned_machine_id = task_data['assigned_machine_id']
-                task_to_update.start_time = task_data['start_time']
-                task_to_update.end_time = task_data['end_time']
-                task_to_update.scheduled_duration_mins = task_data['scheduled_duration_mins']
-                task_to_update.status = task_data['status']
+                task_obj.start_time = task_data['start_time']
+                task_obj.end_time = task_data['end_time']
+                task_obj.scheduled_duration_mins = task_data['scheduled_duration_mins']
+                task_obj.status = task_data.get('status', 'Scheduled')
+                db.add(task_obj)
+                persisted_scheduled_tasks.append(task_obj)
+                logger.debug(f"Updated existing ScheduledTask ID: {task_obj.id} for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
             else:
                 # This is a new task to be scheduled
-                filtered_data = {k: v for k, v in task_data.items() if k in allowed_keys}
-                db.add(ScheduledTask(**filtered_data))
+                filtered_data = {k: v for k, v in task_data.items() if k in scheduled_task_allowed_keys}
+                new_task = ScheduledTask(**filtered_data)
+                db.add(new_task)
+                persisted_scheduled_tasks.append(new_task)
+                logger.debug(f"Created new ScheduledTask for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
 
-            if task_data['status'] == 'Scheduled':
-                newly_scheduled_po_ids.add(po_id)
+            existing_job_log = db.query(JobLog).filter(
+                JobLog.production_order_id == po_id,
+                JobLog.process_step_id == ps_id,
+                JobLog.machine_id == machine_id,
+                JobLog.status.in_([JobLogStatus.PENDING, JobLogStatus.SCHEDULED])
+            ).first()
+
+            if existing_job_log:
+                if existing_job_log.status != JobLogStatus.SCHEDULED:
+                    existing_job_log.status = JobLogStatus.SCHEDULED
+                if existing_job_log.actual_start_time != task_data['start_time']:
+                    existing_job_log.actual_start_time = task_data['start_time']
+                if existing_job_log.actual_end_time != task_data['end_time']:
+                    existing_job_log.actual_end_time = task_data['end_time']
+                
+                db.add(existing_job_log)
+                logger.debug(f"Updated existing JobLog ID: {existing_job_log.id} to SCHEDULED.")
+            else:
+                new_job_log = JobLog(
+                    production_order_id=po_id,
+                    process_step_id=ps_id,
+                    machine_id=machine_id,
+                    actual_start_time=task_data['start_time'], # Use scheduled start time
+                    actual_end_time=task_data['end_time'],     # Use scheduled end time
+                    status=JobLogStatus.SCHEDULED,             # Set status to SCHEDULED
+                    remarks="Automatically created/updated by scheduler run."                    
+                )
+                db.add(new_job_log)
+                logger.debug(f"Created new JobLog for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
 
 
         # Delete old 'Scheduled' tasks that were not part of the new schedule
-        for old_task in existing_tasks_map.values():
-            if old_task.status == 'Scheduled':
-                db.delete(old_task)
+        for key, old_task_obj in existing_scheduled_tasks_map.items():
+            if old_task_obj.status == 'Scheduled':
+                db.delete(old_task_obj)
+                logger.debug(f"Deleted old ScheduledTask ID:{old_task_obj.id} (no longer in new schedule).")
+            else:
+                logger.warning(f"Did not delete old ScheduledTask ID:{old_task_obj.id} with status '{old_task_obj.status}' as it was not 'Scheduled'.")
 
         # Update parent ProductionOrder statuses
         if newly_scheduled_po_ids:
             db.query(ProductionOrder).filter(
                 ProductionOrder.id.in_(newly_scheduled_po_ids),
-                ProductionOrder.current_status == 'Pending'
-            ).update({'current_status': 'Scheduled'}, synchronize_session=False)
+                ProductionOrder.current_status == OrderStatus.PENDING
+            ).update({'current_status': OrderStatus.SCHEDULED}, synchronize_session=False)
+            logger.info(f"Updated {len(newly_scheduled_po_ids)} Production Orders from PENDING to SCHEDULED.")
 
         db.commit()
-        logging.info("Successfully committed new schedule to the database.")
+        for task in persisted_scheduled_tasks:
+            db.refresh(task)
 
+        logging.info("All scheduled tasks, JobLogs, and ProductionOrders successfully committed to database.")
+        return persisted_scheduled_tasks
     except Exception as e:
         db.rollback()
-        logging.error(f"Database error during schedule save. Rolling back transaction.", exc_info=True)
+        logging.error(f"Database error during schedule save. Rolling back transaction. {e}", exc_info=True)
         raise
 
 

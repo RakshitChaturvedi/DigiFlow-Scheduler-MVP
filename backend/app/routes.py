@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
+
 import logging
+from typing import List
 
 from backend.app import crud, schemas, models
+from backend.app.scheduler import save_scheduled_tasks_to_db
 from backend.app.database import get_db
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
 from backend.app.schemas import (
@@ -279,6 +282,55 @@ def delete_downtime_event_endpoint(event_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Downtime event not found")
     crud.delete_downtime_event(db, db_event)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- JOB LOG ---
+@router.post("/job_logs/", response_model=JobLogOut, status_code=status.HTTP_201_CREATED)
+def create_job_log_endpoint(job_log_data: schemas.JobLogCreate, db: Session = Depends(get_db_session)):
+    try:
+        db_job_log = crud.create_job_log(db=db, job_log_data=job_log_data)
+        return db_job_log # crud function already commits and refreshes
+    except ValueError as ve:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ve))
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Error creating job log: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error.")
+
+@router.get("/job_logs/", response_model=List[JobLogOut])
+def list_job_logs_endpoint(db: Session = Depends(get_db_session)):
+    return crud.get_all_job_logs(db)
+
+@router.get("/job_logs/{job_log_id}", response_model=JobLogOut)
+def read_job_log_endpoint(job_log_id: int, db: Session = Depends(get_db_session)):
+    db_job_log = crud.get_job_log(db, job_log_id)
+    if db_job_log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
+    return db_job_log
+
+@router.put("/job_logs/{job_log_id}", response_model=JobLogOut)
+def update_job_log_endpoint(job_log_id: int, update_data: schemas.JobLogUpdate, db: Session = Depends(get_db_session)):
+    db_job_log = crud.get_job_log(db, job_log_id)
+    if not db_job_log:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
+    try:
+        updated_job_log = crud.update_job_log(db, db_obj=db_job_log, job_log_update=update_data)
+        return updated_job_log # crud function already commits and refreshes
+    except ValueError as ve:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ve))
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Error updating job log {job_log_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error.")
+
+@router.delete("/job_logs/{job_log_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job_log_endpoint(job_log_id: int, db: Session = Depends(get_db_session)):
+    db_job_log = crud.get_job_log(db, job_log_id)
+    if not db_job_log:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
+    crud.delete_job_log(db, db_job_log) # crud function already commits
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
