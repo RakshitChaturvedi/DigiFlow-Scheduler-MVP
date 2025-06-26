@@ -16,6 +16,7 @@ from backend.app.database import SessionLocal
 from backend.app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
 from backend.app.schemas import ProductionOrderOut, ScheduledTaskResponse
 from backend.app.enums import JobLogStatus, OrderStatus
+from backend.app.utils import ensure_utc_aware
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def load_and_prepare_data_for_ortools(
     Loads data, correctly handles in-progress tasks, and prepares data for OR-Tools.
     This is now robust and accounts for real-world states.
     """
-    scheduling_anchor_time = to_utc_aware(scheduling_anchor_time)
+    scheduling_anchor_time = ensure_utc_aware(scheduling_anchor_time)
     logging.info("Loading and preparing data for OR-Tools...")
 
     active_machines = db.query(Machine).filter(Machine.is_active == True).all()
@@ -77,20 +78,28 @@ def load_and_prepare_data_for_ortools(
         ])
     ).all()
 
+    for order in production_orders_orm:
+        if order.due_date:
+            order.due_date = ensure_utc_aware(order.due_date)
+        order.arrival_time = ensure_utc_aware(order.arrival_time)
+
     # --- FIX 2: ROBUST IN-PROGRESS & DOWNTIME HANDLING ---
     in_progress_logs = db.query(JobLog).filter(
         JobLog.actual_start_time.isnot(None),
         JobLog.actual_end_time.is_(None)
     ).all()
 
+    for log in in_progress_logs:
+        log.actual_start_time = ensure_utc_aware(log.actual_start_time)
+
     all_downtime_events_raw = db.query(DowntimeEvent).all()
     future_downtime_events: List[DowntimeEvent] = []
     for event in all_downtime_events_raw:
-        event_start_time_aware = to_utc_aware(event.start_time)
-        event_end_time_aware = to_utc_aware(event.end_time)
+        event_start_time_aware = ensure_utc_aware(event.start_time)
+        event_end_time_aware = ensure_utc_aware(event.end_time)
 
         if event_end_time_aware > scheduling_anchor_time:
-            event.start_time = event_end_time_aware
+            event.start_time = max(event_start_time_aware, scheduling_anchor_time)
             event.end_time = event_end_time_aware
             future_downtime_events.append(event)
 
@@ -112,10 +121,9 @@ def load_and_prepare_data_for_ortools(
         task_key = (order.order_id_code, log.step_number)
         actual_start_time_aware = to_utc_aware(log.actual_start_time)
         start_offset = int((log.actual_start_time_aware - scheduling_anchor_time).total_seconds() // 60)
-        
+        setup_time = int(getattr(step_def, 'setup_time_mins', 0) or 0)
         # Estimate remaining duration based on original plan
         op_duration = int(cast(int, step_def.base_duration_per_unit_mins or 0)) * int((order.quantity_to_produce or 1))
-        setup_time = int(step_def.setup_time_mins or 0)
         total_original_duration = int(setup_time + op_duration)
         
         all_tasks_for_solver[task_key] = TaskData(
@@ -123,7 +131,7 @@ def load_and_prepare_data_for_ortools(
             job_id_code=order.order_id_code, 
             step=log.step_number,
             process_step_id=step_def.id, 
-            machine_type="", 
+            machine_type=step_def.required_machine_type, 
             process_step_name=step_def.step_name,
             is_fixed=True, 
             start_offset_mins=start_offset, 
@@ -139,10 +147,11 @@ def load_and_prepare_data_for_ortools(
         route_id = order.product_route_id
         
         # Determine the earliest this job can start its *next* schedulable step
-        job_arrival = to_utc_aware(order.arrival_time) or scheduling_anchor_time
+        job_arrival = ensure_utc_aware(order.arrival_time) or scheduling_anchor_time
         next_step_earliest_start = max(job_arrival, job_next_available_time.get(order_id_code, scheduling_anchor_time))
         start_offset_mins = max(0, int((next_step_earliest_start - scheduling_anchor_time).total_seconds() // 60))
-        deadline_offset = int((to_utc_aware(order.due_date) - scheduling_anchor_time).total_seconds() // 60) if order.due_date else None
+        aware_due_date = ensure_utc_aware(order.due_date)
+        deadline_offset = int((aware_due_date - scheduling_anchor_time).total_seconds() // 60) if aware_due_date else None
 
         if str(route_id) in process_steps_by_route:
             for step_num, step_data in sorted(process_steps_by_route[str(route_id)].items()):

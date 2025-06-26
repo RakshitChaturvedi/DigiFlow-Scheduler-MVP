@@ -19,6 +19,7 @@ from backend.app.schemas import (ScheduleRequest,
                                  ProductionOrderStatusUpdate,
                                  JobLogStatusUpdate)
 from backend.app.routes import router as crud_router
+from backend.app.utils import ensure_utc_aware
 
 # Configure logging for the main API file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

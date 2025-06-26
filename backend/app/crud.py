@@ -1,15 +1,26 @@
 import enum
+import logging
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from typing import List, Type, TypeVar, Union, Optional
+from typing import List, Type, TypeVar, Union, Optional, cast
+from datetime import datetime, timezone
 
 from backend.app import models, schemas
-from backend.app.models import ProductionOrder, ProcessStep, Machine, DowntimeEvent, ScheduledTask, JobLog
-from backend.app.schemas import (ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut,
-                                 ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
-                                 MachineCreate, MachineUpdate, MachineOut,
-                                 DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut,
-                                 JobLogCreate, JobLogUpdate, JobLogOut)
+from backend.app.models import (
+    ProductionOrder, 
+    ProcessStep, 
+    Machine, 
+    DowntimeEvent, 
+    ScheduledTask, 
+    JobLog
+    )
+from backend.app.schemas import (
+    ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut,
+    ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
+    MachineCreate, MachineUpdate, MachineOut,
+    DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut,
+    JobLogCreate, JobLogUpdate, JobLogOut
+    )
 from backend.app.enums import OrderStatus, JobLogStatus
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
 
@@ -175,49 +186,83 @@ def update_production_order_status(db: Session, order_id: int, new_status: Order
         )
     db_order.current_status = new_status
     db.add(db_order)
-    try: 
-        db.commit()
-        db.refresh(db_order)
-    except ValueError as ve:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(ve)
-        )
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail = f"Failed to update production order status: {e}"
-        )
-    
     return db_order
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- JOB LOGS STATUS TRANSITION ---
-def update_job_log_status(db: Session, job_log_id: int, new_status: JobLogStatus) -> JobLog:
-    db_job_log = db.query(JobLog).filter(JobLog.id == job_log_id).first()
+def update_job_log_status(db: Session, job_log_id: int, new_status: JobLogStatus) -> models.JobLog:
+    db_job_log = db.query(models.JobLog).filter(models.JobLog.id == job_log_id).first()
     if not db_job_log:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job Log not found.")
 
+    current_status_enum = db_job_log.status
+
     # Validate the status transition
     try:
-        validate_transition(db_job_log.status, new_status, JOBLOG_TRANSITIONS)
+        validate_transition(current_status_enum, new_status, JOBLOG_TRANSITIONS)
     except ValueError as ve:
         raise HTTPException(status_code=409, detail=str(ve))
 
+    if new_status == JobLogStatus.COMPLETED and db_job_log.actual_end_time is None:
+        setattr(db_job_log, 'actual_end_time', datetime.now(timezone.utc))
 
     db_job_log.status = new_status # Assign the Enum member
     db.add(db_job_log) # Mark as dirty
-    try:
-        db.commit()
-        db.refresh(db_job_log)
-    except ValueError as ve:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update job log status: {e}")
-    
+    if new_status == JobLogStatus.COMPLETED:
+        check_and_update_production_order_completion(db, cast(int,db_job_log.production_order_id))
+
     return db_job_log
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- AUTOMATIC COMPLETION LOGIC ---
+def check_and_update_production_order_completion(db: Session, production_order_id: int):
+    # Checks if all JobLogs for a given ProductionOrder are COMPLETED, If so, updates the ProductionOrder's status to COMPLETED.
+    production_order = get_production_order(db, production_order_id)
+    if not production_order:
+        # Log but don't raise HTTPException here as it's an internal helper
+        print(f"Warning: Production Order with ID {production_order_id} not found for completion check.")
+        return
+
+    incomplete_logs_count = db.query(models.JobLog).filter(
+        models.JobLog.production_order_id == production_order_id,
+        models.JobLog.status != JobLogStatus.COMPLETED
+    ).count()
+
+    if incomplete_logs_count == 0:
+        logging.info(f"All JobLogs for PO {production_order_id} are completed. Updating PO status to COMPLETED.")
+        # This will now be part of the parent transaction, not a new one.
+        update_production_order_status(db, production_order_id, OrderStatus.COMPLETED)    
+
+    # Check if the ProductionOrder is already completed to avoid unnecessary work
+    if production_order.current_status == OrderStatus.COMPLETED:
+        return
+    
+    # Fetch all job logs for this production order. Note: Use db.query directly for a more focused query here
+    get_all_job_logs_for_order = db.query(models.JobLog).filter(
+        models.JobLog.production_order_id == production_order_id
+    ).all()
+
+    # If there are no job logs, the order cant be completed by this logic. 
+    # This scenario might need manual intervention or different logic depending on business rules.
+    if not get_all_job_logs_for_order:
+        print(f"Info: Production Order {production_order_id} has no associated JobLogs. Cannot auto-complete.")
+        return
+    
+    # Check if all job logs are COMPLETED in status
+    all_logs_completed = all(log.status == JobLogStatus.COMPLETED for log in get_all_job_logs_for_order)
+
+    if all_logs_completed:
+        print(f"All JobLogs for Production Order {production_order_id} are completed. Marking Production Order as COMPLETED.")
+        # Use the existing status update function to ensure transiition validation
+        # Wrap in try-except in case the transition is not allowed from current state
+        try:
+            update_production_order_status(db, production_order_id, OrderStatus.COMPLETED)
+        except HTTPException as e:
+            print(f"Error auto-completing Production Order {production_order_id}: {e.detail}")
+    else:
+        print(f"Not all JobLogs for Production Order {production_order_id} are completed. Production Order status remains {production_order.current_status.value}.")
+
+
+    
+    
 

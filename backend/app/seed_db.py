@@ -6,7 +6,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy import inspect
 
 from backend.app.database import SessionLocal, engine, Base
-from backend.app.models import Machine, ProcessStep, ProductionOrder, ScheduledTask, DowntimeEvent
+from backend.app.models import Machine, ProcessStep, ProductionOrder, ScheduledTask, DowntimeEvent, JobLog
 
 import datetime
 import os
@@ -47,8 +47,9 @@ def seed_data():
         # Process on nothing
         # Machine on nothing
         print("Clearing existing data...")
-        db.query(ScheduledTask).delete()
         db.query(DowntimeEvent).delete()
+        db.query(JobLog).delete()
+        db.query(ScheduledTask).delete()
         db.query(ProductionOrder).delete()
         db.query(ProcessStep).delete()
         db.query(Machine).delete()

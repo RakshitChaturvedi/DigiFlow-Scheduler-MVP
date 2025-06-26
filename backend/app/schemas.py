@@ -3,6 +3,7 @@ from typing import List, Optional
 from datetime import datetime, timezone
 
 from backend.app.enums import OrderStatus, JobLogStatus
+from backend.app.utils import ensure_utc_aware
 
 # --- 2.3.2 Define ScheduleRequest Schema ---
 class ScheduleRequest(BaseModel):
@@ -218,12 +219,13 @@ class DowntimeEventOut(DowntimeEventBase):
 # --- Job Logs ---
 class JobLogBase(BaseModel):
     # Fixed: Removed Field(...) for required fields to avoid Pylance redeclaration warning
-    production_order_id: Optional[int] = Field(None)
-    process_step_id: Optional[int] = Field(None)
-    machine_id: Optional[int] = Field(None)
-    actual_start_time: Optional[datetime] = Field(None)
+    production_order_id: int
+    process_step_id: int
+    machine_id: int
+    actual_start_time: datetime
     actual_end_time: Optional[datetime] = Field(None) # Keep Field(None) for optional defaults
     remarks: Optional[str] = Field(None) # Keep Field(None) for optional defaults
+    status: JobLogStatus = JobLogStatus.PENDING
 
     @field_validator("actual_start_time", "actual_end_time", mode="before")
     @classmethod
@@ -243,23 +245,10 @@ class JobLogBase(BaseModel):
         return v
 
 class JobLogCreate(JobLogBase):
-    status: JobLogStatus = JobLogStatus.PENDING # Default status for creation, but can be overridden
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "production_order_id": 1,
-                    "process_step_id": 1,
-                    "machine_id": 1,
-                    "actual_start_time": "2025-07-01T10:00:00Z",
-                    "actual_end_time": "2025-07-01T11:00:00Z",
-                    "status": "In Progress",
-                    "remarks": "Started operation X"
-                }
-            ]
-        }
-    )
+    production_order_id: int
+    process_step_id: int
+    machine_id: int
+    actual_start_time: datetime
 
 class JobLogUpdate(BaseModel):
     # Fixed: Removed Field(...) for optional fields without specific metadata
@@ -290,7 +279,11 @@ class JobLogUpdate(BaseModel):
 
 class JobLogOut(JobLogBase):
     id: int
-    status: JobLogStatus
+    # Ensure all required fields from the model are here for the response
+    production_order_id: int
+    process_step_id: int
+    machine_id: int
+    actual_start_time: datetime
     model_config = ConfigDict(from_attributes=True)
 
 # --- STATUSES ---

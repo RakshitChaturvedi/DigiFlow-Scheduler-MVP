@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 
 import logging
+import traceback
 from typing import List
 
 from backend.app import crud, schemas, models
@@ -18,6 +19,8 @@ from backend.app.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 router = APIRouter(prefix="/api", tags=["CRUD Operations"])
 
 def get_db_session(db: Session = Depends(get_db)):
@@ -289,14 +292,18 @@ def delete_downtime_event_endpoint(event_id: int, db: Session = Depends(get_db))
 def create_job_log_endpoint(job_log_data: schemas.JobLogCreate, db: Session = Depends(get_db_session)):
     try:
         db_job_log = crud.create_job_log(db=db, job_log_data=job_log_data)
+        db.commit()
+        db.refresh(db_job_log)
         return db_job_log # crud function already commits and refreshes
     except ValueError as ve:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ve))
     except Exception as e:
         db.rollback()
-        logger.exception(f"Error creating job log: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error.")
+        logger.error("An unexpected error occurred while creating job_log")
+        logger.exception(e)
+        traceback.print_exc()
+        raise e
 
 @router.get("/job_logs/", response_model=List[JobLogOut])
 def list_job_logs_endpoint(db: Session = Depends(get_db_session)):
@@ -316,6 +323,8 @@ def update_job_log_endpoint(job_log_id: int, update_data: schemas.JobLogUpdate, 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
     try:
         updated_job_log = crud.update_job_log(db, db_obj=db_job_log, job_log_update=update_data)
+        db.commit()
+        db.refresh(updated_job_log)
         return updated_job_log # crud function already commits and refreshes
     except ValueError as ve:
         db.rollback()
@@ -331,6 +340,7 @@ def delete_job_log_endpoint(job_log_id: int, db: Session = Depends(get_db_sessio
     if not db_job_log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
     crud.delete_job_log(db, db_job_log) # crud function already commits
+    db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -350,6 +360,8 @@ def update_production_order_current_status(
     try:
         # Call the CRUD function to handle the status update logic and validation
         updated_order = crud.update_production_order_status(db, order_id, status_update.new_status)
+        db.commit()
+        db.refresh(updated_order)
         return updated_order
     except HTTPException as he: # raised by crud.update_production_order_status (e.g., 404, 400 for invalid transition)
         raise he
@@ -377,8 +389,13 @@ def update_job_log_current_status(
     status_update: JobLogStatusUpdate,
     db: Session = Depends(get_db_session)
 ):
+    db_job_log = crud.get_job_log(db, job_log_id)
+    if not db_job_log:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
     try:
         updated_job_log = crud.update_job_log_status(db, job_log_id, status_update.new_status)
+        db.commit()
+        db.refresh(updated_job_log)
         return updated_job_log
     except HTTPException as he: # Catch HTTPExceptions raised by crud.update_job_log_status
         raise he
