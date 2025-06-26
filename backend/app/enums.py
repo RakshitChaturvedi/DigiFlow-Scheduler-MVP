@@ -3,11 +3,15 @@ from enum import Enum
 class OrderStatus(str, Enum):
     PENDING = "Pending"
     SCHEDULED = "Scheduled"
-    IN_PROGRESS = "InProgress"
+    IN_PROGRESS = "In Progress"
     COMPLETED = "Completed"
     CANCELLED = "Cancelled"
 
 class JobLogStatus(str, Enum):
-    COMPLETED = "completed"
-    PAUSED = "paused"
-    ABORTED_ISSUE = "aborted_issue"
+    PENDING = "Pending" # A job log created but not yet scheduled/started
+    SCHEDULED = "Scheduled"
+    IN_PROGRESS = "In Progress"
+    PAUSED = "Paused"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+    ABORTED = "Aborted"

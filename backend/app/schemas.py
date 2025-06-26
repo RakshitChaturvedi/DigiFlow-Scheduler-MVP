@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, ConfigDict
+from pydantic import BaseModel, field_validator, ConfigDict, Field
 from typing import List, Optional
 from datetime import datetime, timezone
 
@@ -215,3 +215,43 @@ class DowntimeEventOut(DowntimeEventBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
 
+# --- STATUSES ---
+
+class ProductionOrderStatusUpdate(BaseModel):
+    new_status: OrderStatus = Field(..., description="The new status to set for the production order.")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"new_status": "In Progress"},
+                {"new_status": "Completed"}
+            ]
+        }
+    }
+
+class JobLogStatusUpdate(BaseModel):
+    new_status: JobLogStatus = Field(..., description="The new status to set for the job log.")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"new_status": "In Progress"},
+                {"new_status": "Completed"},
+                {"new_status": "Failed"}
+            ]
+        }
+    }
+
+class JobLogOut(BaseModel):
+    id: int
+    production_order_id: int
+    process_step_id: int
+    machine_id: int
+    actual_start_time: datetime
+    actual_end_time: Optional[datetime] = None
+    status: JobLogStatus
+    remarks: Optional[str] = None
+
+    model_config= {
+        'from_attributes': True
+    }

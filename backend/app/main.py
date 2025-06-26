@@ -1,21 +1,27 @@
-from fastapi import FastAPI, Depends, HTTPException, status 
+import logging
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
-import logging
+from fastapi import FastAPI, Depends, HTTPException, status 
 
+from backend.app import crud
 from backend.app.database import get_db
+from backend.app.models import ProductionOrder, JobLog
 from backend.app.scheduler import(
     load_and_prepare_data_for_ortools,
     schedule_with_ortools,
-    save_scheduled_tasks_to_db
-)
-from backend.app.schemas import ScheduleRequest, ScheduledTaskResponse, ScheduleOutputResponse
+    save_scheduled_tasks_to_db)
+from backend.app.schemas import (ScheduleRequest, 
+                                 ScheduledTaskResponse, 
+                                 ScheduleOutputResponse,
+                                 ProductionOrderOut,
+                                 JobLogOut,
+                                 ProductionOrderStatusUpdate,
+                                 JobLogStatusUpdate)
 from backend.app.routes import router as crud_router
 
 # Configure logging for the main API file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__) # Use a logger specific to this module
-
 
 
 # Initialize the FastAPI application
@@ -30,25 +36,17 @@ app.include_router(crud_router)
 # Define a simple root endpoint
 @app.get("/")
 async def read_root():
-    """
-    A simple root endpoint to confirm the API is running.
-    """
+    # A simple root endpoint to confirm the API is running.
     return {"message": "Welcome to Digiflow Scheduler API! It's running."}
-
 
 
 # Database dependency function
 def get_db_session(db: Session = Depends(get_db)):
-    """
-    Dependency that provides a SQLAlchemy SessionLocal to API routes.
-    Ensures the session is properly closed after the request.
-    """
+    # Dependency that provides a SQLAlchemy SessionLocal to API routes. Ensures the session is properly closed after the request.
     try:
         yield db
     finally:
         db.close()
-
-
 
 # Healthcheck 
 @app.get("/healthcheck")

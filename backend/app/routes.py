@@ -1,11 +1,27 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
+import logging
 
 from backend.app import crud, schemas, models
 from backend.app.database import get_db
+from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
+from backend.app.schemas import (
+    ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut, # Using ProductionOrderOut
+    MachineCreate, MachineUpdate, MachineOut, # Assuming MachineOut
+    ProcessStepCreate, ProcessStepUpdate, ProcessStepOut, # Assuming ProcessStepOut
+    DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, # Assuming DowntimeEventOut
+    ProductionOrderStatusUpdate, JobLogStatusUpdate,
+    JobLogOut # Using JobLogOut
+)
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["CRUD Operations"])
 
+def get_db_session(db: Session = Depends(get_db)):
+    try:
+        yield db
+    finally:
+        db.close()
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- PRODUCTION ORDER ---
 @router.post("/orders/", response_model=schemas.ProductionOrderOut, status_code=status.HTTP_201_CREATED)
@@ -264,3 +280,60 @@ def delete_downtime_event_endpoint(event_id: int, db: Session = Depends(get_db))
     crud.delete_downtime_event(db, db_event)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- STATUS TRANSITIONS ---
+
+@router.patch(
+    "/orders/{order_id}/status",
+    response_model=ProductionOrderOut,
+    summary="Update the status of a specific production order",
+    description= "Allows changing the status of a production order, with validation for allowed transitions."
+)
+def update_production_order_current_status(
+    order_id: int,
+    status_update: ProductionOrderStatusUpdate,
+    db: Session = Depends(get_db_session)
+):
+    try:
+        # Call the CRUD function to handle the status update logic and validation
+        updated_order = crud.update_production_order_status(db, order_id, status_update.new_status)
+        return updated_order
+    except HTTPException as he: # raised by crud.update_production_order_status (e.g., 404, 400 for invalid transition)
+        raise he
+    except ValueError as ve:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"An unexpected error occured while updating production order {order_id} status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail= "An unexpected error occurred."
+        )
+
+@router.patch(
+    "/job_logs/{job_log_id}/status",
+    summary="Update the status of a specific job log",
+    description="Allows changing the status of a job log, with validation for allowed transitions."
+)
+def update_job_log_current_status(
+    job_log_id: int,
+    status_update: JobLogStatusUpdate,
+    db: Session = Depends(get_db_session)
+):
+    try:
+        updated_job_log = crud.update_job_log_status(db, job_log_id, status_update.new_status)
+        return updated_job_log
+    except HTTPException as he: # Catch HTTPExceptions raised by crud.update_job_log_status
+        raise he
+    except ValueError as ve: # Fallback for any unexpected ValueError
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"An unexpected error occurred while updating job log {job_log_id} status: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")

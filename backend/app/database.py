@@ -3,6 +3,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from backend.app.models import Base
 
 from backend.app.config import DATABASE_URL
+import backend.app.models
+
 engine = create_engine(DATABASE_URL, echo=False)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

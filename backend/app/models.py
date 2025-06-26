@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text, event
-from sqlalchemy.orm import declarative_base, relationship, Session, attributes
+from sqlalchemy.orm import declarative_base, relationship, Session, attributes, Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy import event, inspect
@@ -72,7 +72,7 @@ class ProductionOrder(Base):
     priority = Column(Integer, default=0, nullable=False) # Higher the number, Higher priority
     arrival_time = Column(DateTime, nullable=False, default=func.now())
     due_date = Column(DateTime, nullable=True) # Optional Hard Deadline
-    current_status = Column(SqlEnum(OrderStatus, name="order_status_enum"), default=OrderStatus.PENDING, nullable=False)
+    current_status: Mapped[OrderStatus] = mapped_column(SqlEnum(OrderStatus, name="order_status_enum"), default=OrderStatus.PENDING, nullable=False)
     created_at = Column(DateTime, server_default=func.now()) # Timestamp when the record was created
     updated_at = Column(DateTime, onupdate=func.now(), default=func.now()) # Timestamp of last update
 
@@ -146,7 +146,7 @@ class JobLog(Base):
     actual_end_time = Column(DateTime(timezone=True), nullable=True) # Nullable because it's not set until the job is done
 
     # Additional useful information
-    status = Column(SqlEnum(JobLogStatus, name="joblog_status_enum"), default=JobLogStatus.COMPLETED) # e.g., 'completed', 'paused', 'aborted_issue'
+    status: Mapped[JobLogStatus] = mapped_column(SqlEnum(JobLogStatus, name="joblog_status_enum"), default=JobLogStatus.COMPLETED) # e.g., 'completed', 'paused', 'aborted_issue'
     remarks = Column(Text, nullable=True) # Any notes from the operator
 
     # Relationships to access the full objects from a log entry
