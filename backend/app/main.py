@@ -95,6 +95,8 @@ async def run_scheduler_endpoint(
                 current_real_time_anchor,
                 db 
             )
+        if status_str.upper() in ["INFEASIBLE", "ERROR"]:
+            logger.error(f"Scheduling failed: status = {status_str}")
         
     except Exception as e:
         logger.exception(f"An unexpected error occurred during scheduling API call: {e}")
@@ -118,7 +120,24 @@ async def run_scheduler_endpoint(
         scheduled_tasks_response = [
             ScheduledTaskResponse.model_validate(task_obj) # Use model_validate for ORM objects
             for task_obj in persisted_scheduled_tasks
+            if not task_obj.archived
         ]
+
+        if not scheduled_tasks_response:
+            logger.warning("Scheduler completed but all tasks were archived or filtered. Returning empty result.")
+            return ScheduleOutputResponse(
+                status="NO_VISIBLE_TASKS",
+                scheduled_tasks=[],
+                message="Scheduler completed but no visible scheduled tasks (archived or invalid)."
+            )
+        
+        for task_obj in persisted_scheduled_tasks:
+            try: 
+                validated = ScheduledTaskResponse.model_validate(task_obj)
+            except Exception as e: 
+                print("Validation failed for task_obj: ",task_obj)
+                raise
+
 
         return ScheduleOutputResponse(
             status=status_str,

@@ -36,7 +36,7 @@ def test_update_production_order():
         "priority": 1,
         "arrival_time": "2025-07-01T10:00:00Z",
         "due_date": "2025-07-03T10:00:00Z",
-        "current_status": "Pending"
+        "current_status": "PENDING"
     })
     assert create_resp.status_code == 201
     order_id = create_resp.json()["id"]

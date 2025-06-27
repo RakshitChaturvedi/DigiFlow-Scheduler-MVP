@@ -353,6 +353,12 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
     """Atomically updates the schedule in the database."""
     logging.info(f"Saving {len(scheduled_tasks_data)} tasks to the database...")
 
+    db.query(ScheduledTask).filter(ScheduledTask.archived == False).update(
+        {ScheduledTask.archived: True},
+        synchronize_session= False
+    )
+    logger.info("Archived all previous ScheduledTasks.")
+
     scheduled_task_allowed_keys = {
         'production_order_id',
         'process_step_id',
@@ -382,7 +388,7 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
 
             newly_scheduled_po_ids.add(po_id)
 
-            scheduled_task_key = {po_id, ps_id, machine_id}
+            scheduled_task_key = (po_id, ps_id, machine_id)
             task_obj = existing_scheduled_tasks_map.pop(scheduled_task_key, None)
 
             if task_obj:
@@ -397,7 +403,7 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
             else:
                 # This is a new task to be scheduled
                 filtered_data = {k: v for k, v in task_data.items() if k in scheduled_task_allowed_keys}
-                new_task = ScheduledTask(**filtered_data)
+                new_task = ScheduledTask(archived=False, **filtered_data)
                 db.add(new_task)
                 persisted_scheduled_tasks.append(new_task)
                 logger.debug(f"Created new ScheduledTask for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
@@ -432,7 +438,7 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
                 db.add(new_job_log)
                 logger.debug(f"Created new JobLog for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
 
-
+        """
         # Delete old 'Scheduled' tasks that were not part of the new schedule
         for key, old_task_obj in existing_scheduled_tasks_map.items():
             if old_task_obj.status == 'Scheduled':
@@ -440,7 +446,7 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
                 logger.debug(f"Deleted old ScheduledTask ID:{old_task_obj.id} (no longer in new schedule).")
             else:
                 logger.warning(f"Did not delete old ScheduledTask ID:{old_task_obj.id} with status '{old_task_obj.status}' as it was not 'Scheduled'.")
-
+        """
         # Update parent ProductionOrder statuses
         if newly_scheduled_po_ids:
             db.query(ProductionOrder).filter(

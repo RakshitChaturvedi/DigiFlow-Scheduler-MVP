@@ -104,6 +104,7 @@ class ScheduledTask(Base):
     # Additional Fields to store derived info from scheduling or actual execution
     scheduled_duration_mins = Column(Integer, nullable=False)
     status = Column(String, default="scheduled", nullable=False) #eg Scheduled, InProgress, Delayed etc
+    archived = mapped_column(Boolean, default=False)
 
     # RELATIONSHIPS
     # to parent objects

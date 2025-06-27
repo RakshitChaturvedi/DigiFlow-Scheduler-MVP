@@ -43,15 +43,15 @@ class ScheduledTaskResponse(BaseModel):
     """
     API response model for one scheduled task, adapted for client readability
     """
-    production_order_id: str
-    process_step_id: str
+    production_order_id: int
+    process_step_id: int
     assigned_machine_id: int
     start_time: datetime
     end_time: datetime
     scheduled_duration_mins: int
     status: str
-    job_id_code: str
-    step_number: int
+    job_id_code: Optional[str] = None
+    step_number: Optional[int] = None
 
     class Config:
         from_attributes = True
