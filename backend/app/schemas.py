@@ -1,4 +1,5 @@
-from pydantic import BaseModel, field_validator, ConfigDict, Field
+from pydantic import BaseModel, field_validator, ConfigDict, Field, EmailStr
+from uuid import UUID
 from typing import List, Optional
 from datetime import datetime, timezone
 
@@ -286,8 +287,81 @@ class JobLogOut(JobLogBase):
     actual_start_time: datetime
     model_config = ConfigDict(from_attributes=True)
 
-# --- STATUSES ---
+# --- PRIVATE USER SCHEMAS ---
+class UserBase(BaseModel):
+    email: EmailStr = Field(..., max_length=255)
+    is_active: bool = True
+    is_superuser: bool = False
+    role: str = "user"
+    full_name: Optional[str] = None
 
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=8, max_length=40)
+
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = Field(default=None, max_length=255)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=40)
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    is_active: Optional[bool] = None
+    is_superuser: Optional[bool] = None
+    role: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class UserInDB(UserBase):
+    id: UUID
+    hashed_password: str
+    created_at: datetime
+    last_login: Optional[datetime] = None
+    refresh_token_hash: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+# --- PUBLIC USER SCHEMAS ---
+class UserOut(BaseModel):
+    id: UUID
+    email: EmailStr
+    full_name: Optional[str] = None
+    is_active: bool
+    role: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class UserUpdateMe(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class UpdatePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+# --- PUBLIC AUTHENTICATION USER SCHEMAS ---
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str 
+
+class Token(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+class TokenPayload(BaseModel):
+    sub: str
+    exp: int
+    iat: Optional[int] = None
+    role: Optional[str] = None
+
+# --- STATUSES ---
 class ProductionOrderStatusUpdate(BaseModel):
     new_status: OrderStatus = Field(..., description="The new status to set for the production order.")
 

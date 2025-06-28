@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from typing import List, Type, TypeVar, Union, Optional, cast
 from datetime import datetime, timezone
+from uuid import UUID
 
 from backend.app import models, schemas
 from backend.app.models import (
@@ -12,17 +13,20 @@ from backend.app.models import (
     Machine, 
     DowntimeEvent, 
     ScheduledTask, 
-    JobLog
+    JobLog,
+    User
     )
 from backend.app.schemas import (
     ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut,
     ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
     MachineCreate, MachineUpdate, MachineOut,
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut,
-    JobLogCreate, JobLogUpdate, JobLogOut
+    JobLogCreate, JobLogUpdate, JobLogOut,
+    UserCreate, UserUpdate, UserUpdateMe, UserOut
     )
 from backend.app.enums import OrderStatus, JobLogStatus
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
+from backend.app.utils import hash_password, verify_password
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- PRODUCTION ORDER --- 
@@ -146,6 +150,59 @@ def update_job_log(db: Session, db_obj: models.JobLog, job_log_update: schemas.J
 
 def delete_job_log(db: Session, db_obj: models.JobLog):
     db.delete(db_obj)
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- USER --- 
+def get_user_by_email(db: Session, email: str) -> Optional[User]:
+    return db.query(User).filter(User.email == email).first()
+
+def get_user(db: Session, user_id: UUID) -> Optional[User]:
+    return db.query(User).filter(User.id == user_id).first()
+
+def create_user(db: Session, user_in: UserCreate) -> User:
+    hashed_pw = hash_password(user_in.password)
+    db_user = User(
+        email = user_in.email,
+        hashed_password = hashed_pw,
+        full_name = user_in.full_name,
+        is_active = True,
+        role = user_in.role,
+        is_superuser = user_in.is_superuser,
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def update_user(db: Session, db_user: User, user_in: UserUpdate) -> User:
+    update_data = user_in.model_dump(exclude_unset=True)
+
+    if "password" in update_data:
+        update_data["hashed_password"] = hash_password(update_data.pop("password"))
+    
+    for field, value in update_data.items():
+        setattr(db_user, field, value)
+
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def update_user_me(db: Session, db_user: User, user_in: UserUpdateMe) -> User:
+    for field, value in user_in.model_dump(exclude_unset=True).items():
+        setattr(db_user, field, value)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def update_user_password(db: Session, db_user: User, current_pw: str, new_pw: str) -> User:
+    if not verify_password(current_pw, db_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+    db_user.hashed_password = hash_password(new_pw)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+    
+
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- VALID STATUS TRANSITIONS ---

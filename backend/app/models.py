@@ -4,6 +4,11 @@ from sqlalchemy.sql import func
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy import event, inspect
 from sqlalchemy import Enum as SqlEnum
+from sqlalchemy.dialects.postgresql import UUID
+from typing import Optional
+from datetime import datetime
+
+import uuid
 
 from backend.app.enums import OrderStatus, JobLogStatus
 
@@ -12,6 +17,7 @@ import datetime
 
 Base = declarative_base()
 
+# --- MACHINE MODEL ---
 class Machine(Base):
     # A physical machine or workstation in the manufacturing facility.
 
@@ -35,6 +41,7 @@ class Machine(Base):
     def __repr__(self):
         return f"<Machine(id={self.id}, machine_id_code = '{self.machine_id_code}', type = '{self.machine_type}')>"
 
+# --- PROCESS STEP MODEL ---
 class ProcessStep(Base):
     # Represents a generic step in production process route, defines WHAT needs to be done and
     # WHICH TYPE of machine can do it, does NOT link to a specific physical machine
@@ -58,6 +65,7 @@ class ProcessStep(Base):
         return (f"<ProcessStep(id={self.id}, route='{self.product_route_id}', "
                 f"step_number={self.step_number}, required_machine_type = '{self.required_machine_type}')>")
     
+# --- PRODUCTION ORDER MODEL ---
 class ProductionOrder(Base):
     # Represents a customer order for a specific product, quantity, due date and priority.
     # Core demand that drives scheduling
@@ -85,7 +93,8 @@ class ProductionOrder(Base):
     def __repr__(self):
         return(f"<ProductionOrder(id={self.id}, code='{self.order_id_code}', "
                f"qty={self.quantity_to_produce}, status='{self.current_status}')>")
-    
+
+# --- SCHEDULED TASK MODEL ---    
 class ScheduledTask(Base):
     # Represents a specific instance of a process step being scheduled on a particular machine for a given
     # production order. this is the output of your scheduling algorithm
@@ -116,6 +125,7 @@ class ScheduledTask(Base):
         return(f"<ScheduledTask(id={self.id}, order_id={self.production_order_id}, "
                f"machine_id={self.assigned_machine_id}, start={self.start_time.strftime('%Y-%m-%d %H:%M')})>")
 
+# --- DOWNTIME EVENT MODEL ---
 class DowntimeEvent(Base):
     __tablename__ = 'downtime_events'
 
@@ -132,7 +142,8 @@ class DowntimeEvent(Base):
     def __repr__(self):
         return(f"<DowntimeEvent(id={self.id}, machine_id={self.machine_id}, "
                f"start = '{self.start_time.strftime('%Y-%m-%d %H:%M')}, reason = '{self.reason})>")
-    
+
+# --- JOB LOG MODEL ---    
 class JobLog(Base):
     __tablename__ = "job_logs"
 
@@ -155,6 +166,21 @@ class JobLog(Base):
     process_step = relationship("ProcessStep")
     machine = relationship("Machine")
 
+# --- USER MODEL ---
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    role: Mapped[str] = mapped_column(String, default="user")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    last_login: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    refresh_token_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 # --- Consolidated SQLAlchemy Event Listener for All Validations (3.1.1 and 3.1.2) ---
 @event.listens_for(Session, "before_flush")
