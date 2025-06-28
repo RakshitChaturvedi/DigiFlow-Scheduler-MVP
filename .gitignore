@@ -28,3 +28,5 @@ temp/
 # Generated files from build processes (e.g., dist/ for packaging)
 build/
 dist/
+
+backend/app/config.py
