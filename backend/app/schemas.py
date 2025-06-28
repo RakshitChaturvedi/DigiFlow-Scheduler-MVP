@@ -289,6 +289,7 @@ class JobLogOut(JobLogBase):
 
 # --- PRIVATE USER SCHEMAS ---
 class UserBase(BaseModel):
+    username: str = Field(..., max_length=255)
     email: EmailStr = Field(..., max_length=255)
     is_active: bool = True
     is_superuser: bool = False
@@ -328,6 +329,7 @@ class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class UserRegister(BaseModel):
+    username: str
     email: EmailStr
     password: str
     full_name: Optional[str] = None
@@ -352,7 +354,7 @@ class LoginRequest(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
 
 class TokenPayload(BaseModel):

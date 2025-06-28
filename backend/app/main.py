@@ -2,6 +2,9 @@ import logging
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
+from fastapi.openapi.models import OAuthFlow as OAuthFlowsModel
+from fastapi.security import OAuth2
+
 from typing import List
 
 from backend.app import crud
@@ -35,6 +38,7 @@ app = FastAPI(
 
 app.include_router(crud_router)
 
+
 # Define a simple root endpoint
 @app.get("/")
 async def read_root():
@@ -55,7 +59,13 @@ def get_db_session(db: Session = Depends(get_db)):
 def healthcheck():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+# TEMPORARY PROTECTED ROUTE FOR TESTING
+from app.dependencies import get_current_user
+from app.models import User
 
+@app.get("/api/protected", response_model=str)
+def protected_route(current_user: User= Depends(get_current_user)):
+    return f"Hello, {current_user.email}. You are authenticated."
 
 # --- Creating Scheduling API Endpoint, Call Scheduler Logic, Handle Output ---
 @app.post(
@@ -153,3 +163,4 @@ async def run_scheduler_endpoint(
             scheduled_tasks=[],
             message="Scheduling failed or yielded an infeasible plan. No new schedule saved."
         )
+

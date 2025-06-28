@@ -6,7 +6,7 @@ from typing import List, Type, TypeVar, Union, Optional, cast
 from datetime import datetime, timezone
 from uuid import UUID
 
-from backend.app import models, schemas
+from backend.app import schemas
 from backend.app.models import (
     ProductionOrder, 
     ProcessStep, 
@@ -16,6 +16,7 @@ from backend.app.models import (
     JobLog,
     User
     )
+from backend.app import models
 from backend.app.schemas import (
     ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut,
     ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
@@ -162,6 +163,7 @@ def get_user(db: Session, user_id: UUID) -> Optional[User]:
 def create_user(db: Session, user_in: UserCreate) -> User:
     hashed_pw = hash_password(user_in.password)
     db_user = User(
+        username = user_in.username,
         email = user_in.email,
         hashed_password = hashed_pw,
         full_name = user_in.full_name,

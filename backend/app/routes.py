@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 import logging
 import traceback
 from typing import List
 
-from backend.app import crud, schemas, models
+from backend.app import schemas
+from backend.app import crud
+from backend.app import models
 from backend.app.scheduler import save_scheduled_tasks_to_db
 from backend.app.database import get_db
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
@@ -15,8 +18,12 @@ from backend.app.schemas import (
     ProcessStepCreate, ProcessStepUpdate, ProcessStepOut, # Assuming ProcessStepOut
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, # Assuming DowntimeEventOut
     ProductionOrderStatusUpdate, JobLogStatusUpdate,
-    JobLogOut # Using JobLogOut
+    JobLogOut,
+    UserOut, LoginRequest, UserRegister, Token, UserCreate
 )
+from backend.app.crud import get_user_by_email, create_user
+from backend.app.utils import hash_password, verify_password, create_access_token
+from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -406,3 +413,33 @@ def update_job_log_current_status(
         db.rollback()
         logger.exception(f"An unexpected error occurred while updating job log {job_log_id} status: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- REGISTRATION AND LOGIN ---
+@router.post("/api/register", response_model=UserOut, status_code=201)
+def register_user(user_data: UserRegister, db: Session = Depends(get_db)):
+    existing_user = get_user_by_email(db, user_data.email)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user_create = UserCreate(
+        username= user_data.username,
+        email = user_data.email,
+        password= user_data.password,
+        full_name= user_data.full_name,
+        role="user",
+        is_active=True,
+        is_superuser= False
+    )
+
+    db_user = create_user(db, user_create)
+    return db_user
+
+@router.post("/api/login", response_model=Token)
+def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user: User = get_user_by_email(db, form_data.username)
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid email or password")
+    
+    token = create_access_token(subject=str(user.email), role=user.role)
+    return {"access_token": token, "token_type": "bearer"}
