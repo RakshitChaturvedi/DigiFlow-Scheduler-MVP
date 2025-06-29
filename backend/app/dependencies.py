@@ -7,12 +7,12 @@ from jose import JWTError
 from sqlalchemy.orm import Session
 from pydantic import ValidationError
 
-from app.config import SECRET_KEY, ALGORITHM
-from app.utils import decode_access_token
-from app.crud import get_user_by_email
-from app.models import User
-from app.database import get_db
-from app.schemas import TokenPayload
+from backend.app.config import SECRET_KEY, ALGORITHM
+from backend.app.utils import decode_access_token
+from backend.app.crud import get_user_by_email
+from backend.app.models import User
+from backend.app.database import get_db
+from backend.app.schemas import TokenPayload
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login", scheme_name="JWT")
 
@@ -26,12 +26,13 @@ def get_current_user(
     except (JWTError, ValidationError):
         raise HTTPException(
             status_code= status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials"
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"}
         )
     
     user = get_user_by_email(db, token_data.sub)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="User not found", headers={"WWW-Authenticate": "Bearer"})
     
     return user
 

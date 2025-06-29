@@ -160,6 +160,12 @@ def get_user_by_email(db: Session, email: str) -> Optional[User]:
 def get_user(db: Session, user_id: UUID) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
 
+def get_user_by_id(db: Session, user_id: UUID) -> User | None:
+    return db.query(User).filter(User.id == user_id).first()
+
+def get_all_users(db: Session) -> list[User]:
+    return db.query(User).order_by(User.created_at.desc()).all()
+
 def create_user(db: Session, user_in: UserCreate) -> User:
     hashed_pw = hash_password(user_in.password)
     db_user = User(
@@ -185,6 +191,27 @@ def update_user(db: Session, db_user: User, user_in: UserUpdate) -> User:
     for field, value in update_data.items():
         setattr(db_user, field, value)
 
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def update_user_by_admin(db: Session, db_user: User, updates: UserUpdate) -> User:
+    if updates.email:
+        existing = get_user_by_email(db, updates.email)
+        if existing and existing.id != db_user.id:
+            raise HTTPException(status_code=400, detail="Email already in use")
+        db_user.email = updates.email
+    if updates.full_name is not None:
+        db_user.full_name = updates.full_name
+    if updates.role is not None:
+        db_user.role = updates.role
+    if updates.is_active is not None:
+        db_user.is_active = updates.is_active
+    if updates.is_superuser is not None:
+        db_user.is_superuser = updates.is_superuser
+    if updates.password:
+        db_user.hashed_password = hash_password(updates.password)
+    
     db.commit()
     db.refresh(db_user)
     return db_user

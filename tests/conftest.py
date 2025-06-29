@@ -8,7 +8,7 @@ from backend.app.main import app
 from backend.app.database import Base, get_db
 import backend.app.models
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
@@ -28,7 +28,7 @@ def db_session_fixture():
         session.close()
         Base.metadata.drop_all(bind=engine)
 
-@pytest.fixture(name="client")
+@pytest.fixture(name="client", autouse=True)
 def client_fixture(db_session: Session):
     # Provides a FastAPI TestClient configured to use the test database session. Overrides the application's get_db dependency.
 
@@ -44,4 +44,5 @@ def client_fixture(db_session: Session):
         yield test_client
 
     app.dependency_overrides.clear()
+
 

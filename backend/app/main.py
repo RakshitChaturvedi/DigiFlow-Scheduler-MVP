@@ -60,8 +60,8 @@ def healthcheck():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 # TEMPORARY PROTECTED ROUTE FOR TESTING
-from app.dependencies import get_current_user
-from app.models import User
+from backend.app.dependencies import get_current_user
+from backend.app.models import User
 
 @app.get("/api/protected", response_model=str)
 def protected_route(current_user: User= Depends(get_current_user)):

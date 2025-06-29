@@ -339,6 +339,7 @@ class UserRegister(BaseModel):
 class UserUpdateMe(BaseModel):
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
+    username: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
