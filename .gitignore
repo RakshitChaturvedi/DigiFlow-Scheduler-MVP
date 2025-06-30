@@ -1,32 +1,32 @@
-# Virtual environment directories
+# === Python backend ===
 .venv/
 venv/
-
-# Environment variables (sensitive data like DB credentials)
-.env
-
-# Python compiled files
 __pycache__/
 *.pyc
-
-# IDE specific files (VS Code)
-.vscode/
-.idea/ # For PyCharm users, good to include as well
-
-# Operating system specific files
-.DS_Store # macOS specific
-
-# Logs and temporary files
+*.sqlite
+*.sqlite3
 *.log
+.env
+.vscode/
+.idea/
+backend/app/config.py
+
+# === Frontend (React + Vite + Tailwind) ===
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.next/
+/frontend/.cache/
+/frontend/.env
+
+# === Build and distribution ===
+build/
+dist/
 temp/
 *.tmp
 
-# Database specific (if you ever use local SQLite for testing, for example)
-*.sqlite
-*.sqlite3
-
-# Generated files from build processes (e.g., dist/ for packaging)
-build/
-dist/
-
-backend/app/config.py
+# === OS and Editor junk ===
+.DS_Store
+Thumbs.db
+*.sublime-workspace
+*.sublime-project
+*.swp
