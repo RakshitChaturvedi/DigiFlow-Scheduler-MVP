@@ -1,6 +1,6 @@
 from pydantic import BaseModel, field_validator, ConfigDict, Field, EmailStr
 from uuid import UUID
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime, timezone
 
 from backend.app.enums import OrderStatus, JobLogStatus
@@ -160,6 +160,13 @@ class ProcessStepBase(BaseModel):
             raise ValueError("step_number and base_duration_per_mins must be positive")
         return v
 
+class ProcessStepImport(BaseModel):
+    product_route_id: str
+    step_number: int
+    step_name: Optional[str] = None
+    required_machine_type: str
+    base_duration_per_unit_mins: int
+
 class ProcessStepCreate(ProcessStepBase): pass
 class ProcessStepUpdate(BaseModel):
     step_name: Optional[str] = None
@@ -182,6 +189,12 @@ class MachineBase(BaseModel):
         if v < 0:
             raise ValueError("default_setup_time_mins cannot be negative")
         return v
+
+class MachineImport(BaseModel):
+    machine_id_code: str
+    machine_type: str
+    default_setup_time_mins: int
+    is_active: Optional[bool] = True
 
 class MachineCreate(MachineBase): pass
 class MachineUpdate(BaseModel):
@@ -216,7 +229,13 @@ class DowntimeEventBase(BaseModel):
         if 'start_time' in values.data and v <= values.data['start_time']:
             raise ValueError('end_time must be after start_time')
         return v
-    
+
+class DowntimeEventImport(BaseModel):
+    machine_id: int
+    start_time: datetime
+    end_time: datetime
+    reason: Optional[str] = None
+
 class DowntimeEventCreate(DowntimeEventBase): pass
 class DowntimeEventUpdate(BaseModel):
     start_time: Optional[datetime] = None

@@ -182,10 +182,7 @@ def get_filtered_sorted_production_orders(
 
     # Pagination
     query = query.offset(offset).limit(limit)
-
     return query.all()
-
-
 
 @router.get("/orders/{order_id}", response_model=schemas.ProductionOrderOut)
 def get_production_order_endpoint(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
@@ -255,6 +252,39 @@ def create_process_step_endpoint(step_data: schemas.ProcessStepCreate, db: Sessi
             detail=f"An internal server error occured: {str(e)}"
         )
 
+@router.post("/steps/import", status_code=201)
+def import_process_steps(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    if not file.filename or not file.filename.endswith(('.csv', '.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Invalid file format. Only CSV or Excel files are supported.")
+    
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file.file)
+            df['step_name'] = df['step_name'].fillna("Unnamed Step")
+            df['product_route_id'] = df['product_route_id'].astype(str)
+        else:
+            df = pd.read_excel(file.file)
+            df['step_name'] = df['step_name'].fillna("Unnamed Step")
+            df['product_route_id'] = df['product_route_id'].astype(str)
+        df = df.where(pd.notnull(df), None)
+        df['step_name'] = df['step_name'].fillna("Unnamed Step")
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+    
+    try:
+        records = cast(List[Dict[str, Any]], df.to_dict(orient="records"))
+        steps = [schemas.ProcessStepImport(**row) for row in records]
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid data format: {str(e)}")
+
+    crud.import_process_steps(db, steps)
+    return {"message": f"Successfully imported {len(steps)} process steps."}
+
 @router.get("/steps/", response_model=list[schemas.ProcessStepOut])
 def get_all_process_steps_endpoint(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     return crud.get_all_process_steps(db)
@@ -314,6 +344,36 @@ def create_machine_endpoint(machine_data: schemas.MachineCreate, db: Session = D
             detail=f"An internal server error occured: {str(e)}"
         )
 
+@router.post("/machines/import", status_code=201)
+def import_machines(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    if not file.filename or not file.filename.endswith(('.csv', '.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Invalid file format. Only CSV or Excel files are supported.")
+    
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file.file)
+        else:
+            df = pd.read_excel(file.file)
+
+        df = df.where(pd.notnull(df), None)  # Replace NaNs with None for Pydantic
+        df['is_active'] = df['is_active'].fillna(True)
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+    
+    try:
+        records = cast(List[Dict[str, Any]], df.to_dict(orient="records"))
+        machines = [schemas.MachineImport(**row) for row in records]
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid data format: {str(e)}")
+
+    crud.import_machines(db, machines)
+    return {"message": f"Successfully imported {len(machines)} machines."}
+
 @router.get("/machines/", response_model=list[schemas.MachineOut])
 def get_all_machines_endpoint(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     return crud.get_all_machines(db)
@@ -372,6 +432,38 @@ def create_downtime_event_endpoint(event_data: schemas.DowntimeEventCreate, db: 
             status_code=500, 
             detail=f"An internal server error occured: {str(e)}"
         )
+
+@router.post("/downtime-events/import", status_code=201)
+def import_downtime_events(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    if not file.filename or not file.filename.endswith(('.csv', '.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Invalid file format. Only CSV or Excel files are supported.")
+    
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file.file)
+        else:
+            df = pd.read_excel(file.file)
+
+        df = df.where(pd.notnull(df), None)
+        df['start_time'] = pd.to_datetime(df['start_time'], dayfirst=True, errors='coerce')
+        df['end_time'] = pd.to_datetime(df['end_time'], dayfirst=True, errors='coerce')
+        df['reason'] = df['reason'].fillna("No reason specified")
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+    
+    try:
+        records = cast(List[Dict[str, Any]], df.to_dict(orient="records"))
+        events = [schemas.DowntimeEventImport(**row) for row in records]
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid data format: {str(e)}")
+
+    crud.import_downtime_events(db, events)
+    return {"message": f"Successfully imported {len(events)} downtime events."}
 
 @router.get("/downtimes/", response_model=list[schemas.DowntimeEventOut])
 def get_all_downtime_events_endpoint(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):

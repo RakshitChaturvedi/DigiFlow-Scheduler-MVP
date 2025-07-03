@@ -1,6 +1,6 @@
 import enum
 import logging
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from typing import List, Type, TypeVar, Union, Optional, cast
@@ -20,9 +20,9 @@ from backend.app.models import (
 from backend.app import models
 from backend.app.schemas import (
     ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut, ProductionOrderImport,
-    ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
-    MachineCreate, MachineUpdate, MachineOut,
-    DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut,
+    ProcessStepCreate, ProcessStepUpdate, ProcessStepOut, ProcessStepImport,
+    MachineCreate, MachineUpdate, MachineOut, MachineImport,
+    DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, DowntimeEventImport,
     JobLogCreate, JobLogUpdate, JobLogOut,
     UserCreate, UserUpdate, UserUpdateMe, UserOut
     )
@@ -98,6 +98,36 @@ def create_process_step(db: Session, step_data: schemas.ProcessStepCreate) -> mo
     db.add(step)
     return step
 
+def import_process_steps(db: Session, steps: List[ProcessStepImport]):
+    step_keys = {(step.product_route_id, step.step_number) for step in steps}
+    if len(step_keys) != len(steps):
+        raise HTTPException(status_code=400, detail="Duplicate step_number for the same route_id in file")
+
+    existing_keys = set(
+        (row.product_route_id, row.step_number)
+        for row in db.query(ProcessStep.product_route_id, ProcessStep.step_number)
+        .filter(tuple_(ProcessStep.product_route_id, ProcessStep.step_number).in_(step_keys))
+        .all()
+    )
+    if existing_keys:
+        raise HTTPException(
+            status_code=409,
+            detail=f"These route_id/step_number pairs already exist: {existing_keys}"
+        )
+
+    db_steps = [
+        models.ProcessStep(
+            product_route_id=step.product_route_id,
+            step_number=step.step_number,
+            step_name=step.step_name,
+            required_machine_type=step.required_machine_type,
+            base_duration_per_unit_mins=step.base_duration_per_unit_mins
+        ) for step in steps
+    ]
+    db.add_all(db_steps)
+    db.commit()
+    return db_steps
+
 def get_process_step(db:Session, step_id: int) -> models.ProcessStep | None:
     return db.query(models.ProcessStep).filter(models.ProcessStep.id == step_id).first()
 
@@ -121,6 +151,36 @@ def create_machine(db: Session, machine_data: schemas.MachineCreate) -> models.M
     db.add(machine)
     return machine
 
+def import_machines(db: Session, machines: List[MachineImport]):
+    seen_codes = set()
+    for machine in machines:
+        if machine.machine_id_code in seen_codes:
+            raise HTTPException(status_code=400, detail=f"Duplicate machine_id_code in file: {machine.machine_id_code}")
+        seen_codes.add(machine.machine_id_code)
+
+    existing_codes = set(
+        row[0] for row in db.execute(
+            select(Machine.machine_id_code).where(Machine.machine_id_code.in_(seen_codes))
+        ).all()
+    )
+    if existing_codes:
+        raise HTTPException(
+            status_code=409,
+            detail=f"These machine IDs already exist in DB: {', '.join(existing_codes)}"
+        )
+
+    db_machines = [
+        models.Machine(
+            machine_id_code=machine.machine_id_code,
+            machine_type=machine.machine_type,
+            default_setup_time_mins=machine.default_setup_time_mins,
+            is_active=machine.is_active
+        ) for machine in machines
+    ]
+    db.add_all(db_machines)
+    db.commit()
+    return db_machines
+
 def get_machine(db: Session, machine_id: int) -> models.Machine | None:
     return db.query(models.Machine).filter(models.Machine.id == machine_id).first()
 
@@ -137,8 +197,10 @@ def update_machine(db: Session, db_obj: models.Machine, machine_update: schemas.
     db.add(db_obj)
     return db_obj
 
-def delete_machine(db: Session, db_obj: models.Machine):
-    db.delete(db_obj)
+def delete_machine(db: Session, machine_obj: models.Machine):
+    db.query(models.DowntimeEvent).filter(models.DowntimeEvent.machine_id == machine_obj.id).delete()
+    db.delete(machine_obj)
+    db.commit()
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- DOWNTIME EVENT ---
@@ -146,6 +208,31 @@ def create_downtime_event(db: Session, event_data: schemas.DowntimeEventCreate) 
     event = models.DowntimeEvent(**event_data.model_dump())
     db.add(event)
     return event
+
+def import_downtime_events(db: Session, events: List[DowntimeEventImport]):
+    for event in events:
+        if event.end_time <= event.start_time:
+            raise HTTPException(
+                status_code=400,
+                detail=f"End time must be after start time for machine ID {event.machine_id}"
+            )
+        if not event.reason:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Reason is required for downtime event on machine ID {event.machine_id}"
+            )
+
+    db_events = [
+        models.DowntimeEvent(
+            machine_id=event.machine_id,
+            start_time=event.start_time,
+            end_time=event.end_time,
+            reason=event.reason
+        ) for event in events
+    ]
+    db.add_all(db_events)
+    db.commit()
+    return db_events
 
 def get_downtime_event(db:Session, event_id: int) -> models.DowntimeEvent | None:
     return db.query(models.DowntimeEvent).filter(models.DowntimeEvent.id == event_id).first()

@@ -36,7 +36,7 @@ class Machine(Base):
     # A machine can have many scheduled tasks assigned to it
     scheduled_tasks = relationship("ScheduledTask", back_populates="assigned_machine")
     # A machine can have many downtime events
-    downtime_events = relationship("DowntimeEvent", back_populates="machine")
+    downtime_events = relationship("DowntimeEvent", back_populates="machine", cascade="all, delete", passive_deletes=True)
 
     def __repr__(self):
         return f"<Machine(id={self.id}, machine_id_code = '{self.machine_id_code}', type = '{self.machine_type}')>"
@@ -131,7 +131,7 @@ class DowntimeEvent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    machine_id = Column(Integer, ForeignKey('machines.id'), nullable=False, index=True)
+    machine_id = Column(Integer, ForeignKey('machines.id', ondelete='CASCADE'), nullable=False, index=True)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     reason = Column(String, nullable=False)

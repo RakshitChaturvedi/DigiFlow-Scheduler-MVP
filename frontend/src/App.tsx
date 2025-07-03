@@ -8,6 +8,8 @@ import ProductionOrders from './pages/ProductionOrders';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './auth/ProtectedRoute';
 import { useAuth } from './auth/AuthContext';
+import Machines from './pages/Machines';
+import ProcessSteps from './pages/ProcessSteps';
 
 const MainLayout = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
@@ -63,6 +65,8 @@ const MainLayout = () => {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/production-orders" element={<ProductionOrders />} />
+            <Route path='/machines' element={<Machines />} />
+            <Route path='/processes' element={<ProcessSteps />} />
             {/* ... other protected routes */}
             <Route path="*" element={<Navigate to="/dashboard" />} />
           </Routes>
