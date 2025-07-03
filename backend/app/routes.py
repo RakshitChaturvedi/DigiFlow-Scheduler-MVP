@@ -27,7 +27,7 @@ from backend.app.schemas import (
 from backend.app.crud import get_user_by_email, create_user, get_user_by_id, get_all_users, update_user_by_admin
 from backend.app.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token, ensure_utc_aware
 from backend.app.models import User
-from backend.app.dependencies import get_current_active_user, require_admin
+from backend.app.dependencies import get_current_active_user, require_admin, get_current_user
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -39,6 +39,15 @@ def get_db_session(db: Session = Depends(get_db)):
         yield db
     finally:
         db.close()
+
+@router.get("/whoami")
+def who_am_i(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "is_admin": current_user.is_superuser,
+        "role": current_user.role
+    }
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- PRODUCTION ORDER ---
 @router.post("/orders/", response_model=schemas.ProductionOrderOut, status_code=status.HTTP_201_CREATED)

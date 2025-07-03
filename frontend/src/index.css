@@ -1,3 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Optional: Add global custom CSS here if needed, but prefer Tailwind utilities */
+body {
+  font-family: 'Inter', sans-serif; /* Ensure Inter is applied globally */
+}

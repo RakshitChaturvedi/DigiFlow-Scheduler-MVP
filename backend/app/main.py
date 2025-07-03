@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
 from fastapi.openapi.models import OAuthFlow as OAuthFlowsModel
 from fastapi.security import OAuth2
+from fastapi.middleware.cors import CORSMiddleware
 
 from typing import List
 
@@ -37,6 +38,20 @@ app = FastAPI(
 )
 
 app.include_router(crud_router)
+
+# Define the list of origins that are allowed to make requests.
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials = True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 
 # Define a simple root endpoint
