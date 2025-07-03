@@ -1,35 +1,44 @@
 import React from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getProductionOrders } from '../api/productionOrdersApi';
+import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
+import { getProductionOrders, deleteProductionOrder } from '../api/productionOrdersApi';
 import type { ProductionOrderData } from '../api/productionOrdersApi';
 import AddProductionOrderModal from '../components/AddProductionOrderModal';
 import { queryClient } from '../lib/react-query';
+import ImportOrdersModal from '../components/ImportProductionOrderModal';
 
 const ProductionOrders: React.FC = () => {
   const [searchTerm, setSearchTerm] = React.useState<string>('');
 
+  const [filters, setFilters] = React.useState({
+    sort_by: '', // e.g. 'arrival_time', 'priority', etc.
+    sort_order: '', // 'asc' or 'desc'
+    filter_by_status: '',
+    filter_by_priority: '',
+    filter_by_product: '',
+    filter_by_progress_min: '',
+    filter_by_progress_max: '',
+  });
+
   const { data: productionOrders, isLoading, isError, error } = useQuery<ProductionOrderData[], Error>({
-    queryKey: ['productionOrders'],
-    queryFn: getProductionOrders,
+    queryKey: ['productionOrders', filters],
+    queryFn: () => getProductionOrders(filters),
     staleTime: 5 * 60 * 1000,
   });
 
-  const filteredOrders = productionOrders?.filter(order =>
-    order.order_id_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (order.product_name && order.product_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    order.current_status.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+
+  const filteredOrders = productionOrders || [];
 
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
   const [isEditing, setIsEditing] = React.useState(false);
   const [selectedOrder, setSelectedOrder] = React.useState<ProductionOrderData | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = React.useState(false);
 
   const handleAddOrder = () => {
     setIsEditing(false);
     setSelectedOrder(null);
     setIsAddModalOpen(true);
   };
-  const handleImportOrders = () => alert('Import Orders clicked!');
+  const handleImportOrders = () => setIsImportModalOpen(true);
   const handleEditOrder = (id: number) => {
     const orderToEdit = productionOrders?.find(order => order.id === id);
     if (orderToEdit) {
@@ -38,9 +47,21 @@ const ProductionOrders: React.FC = () => {
       setIsAddModalOpen(true);
     }
   };
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteProductionOrder,
+    onSuccess: () => {
+      alert("Order deleted successfully.");
+      queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
+    },
+    onError: (err: any) => {
+      alert(err.response?.data?.detail || 'Failed to delete order');
+    }
+  });
+
   const handleDeleteOrder = (id: number) => {
     if (window.confirm(`Are you sure you want to delete Order ${id}?`)) {
-      alert(`Delete Order ID: ${id}`);
+      deleteMutation.mutate(id);
     }
   };
 
@@ -76,6 +97,7 @@ const ProductionOrders: React.FC = () => {
 
       <div className="bg-white p-6 rounded-lg shadow-sm">
         <div className="mb-4 flex flex-col md:flex-row md:justify-between md:items-center space-y-3 md:space-y-0">
+
           <input
             type="text"
             placeholder="Search orders..."
@@ -83,13 +105,68 @@ const ProductionOrders: React.FC = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          <div className="flex flex-wrap gap-3 mt-3">
+            <input
+              type="text"
+              placeholder="Filter by product..."
+              className="border rounded px-2 py-1"
+              value={filters.filter_by_product}
+              onChange={(e) => setFilters(prev => ({ ...prev, filter_by_product: e.target.value }))}
+            />
+
+            <select
+              className="border rounded px-2 py-1"
+              value={filters.filter_by_status}
+              onChange={(e) => setFilters(prev => ({ ...prev, filter_by_status: e.target.value }))}
+            >
+              <option value="">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+
+            <input
+              type="number"
+              placeholder="Min Progress %"
+              className="border rounded px-2 py-1 w-28"
+              value={filters.filter_by_progress_min}
+              onChange={(e) => setFilters(prev => ({ ...prev, filter_by_progress_min: e.target.value }))}
+            />
+
+            <input
+              type="number"
+              placeholder="Max Progress %"
+              className="border rounded px-2 py-1 w-28"
+              value={filters.filter_by_progress_max}
+              onChange={(e) => setFilters(prev => ({ ...prev, filter_by_progress_max: e.target.value }))}
+            />
+          </div>
+
           <div className="flex space-x-3">
-            <button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200">
-              Sort By
-            </button>
-            <button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200">
-              Filter
-            </button>
+
+            <select
+              className="border rounded-lg px-3 py-2 text-sm"
+              value={filters.sort_by}
+              onChange={(e) => setFilters(prev => ({ ...prev, sort_by: e.target.value }))}
+            >
+              <option value="">Sort By</option>
+              <option value="arrival_time">Arrival Time</option>
+              <option value="due_date">Due Date</option>
+              <option value="priority">Priority</option>
+              <option value="progress">Progress</option>
+            </select>
+
+            <select
+              className="border rounded-lg px-3 py-2 text-sm"
+              value={filters.sort_order}
+              onChange={(e) => setFilters(prev => ({ ...prev, sort_order: e.target.value }))}
+            >
+              <option value="">Order</option>
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+
           </div>
         </div>
 
@@ -165,6 +242,10 @@ const ProductionOrders: React.FC = () => {
         isEditing={isEditing}
         initialData={selectedOrder ?? undefined} 
       />
+      )}
+
+      {isImportModalOpen && (
+        <ImportOrdersModal onClose={() => setIsImportModalOpen(false)} />
       )}
     </div>
   );

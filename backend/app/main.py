@@ -41,6 +41,7 @@ app.include_router(crud_router)
 
 # Define the list of origins that are allowed to make requests.
 origins = [
+    'http://localhost:5173',
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]

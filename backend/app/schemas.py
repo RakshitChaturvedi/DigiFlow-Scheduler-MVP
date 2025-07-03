@@ -79,7 +79,7 @@ class ScheduleOutputResponse(BaseModel):
 # --- Production  Order ---
 class ProductionOrderBase(BaseModel):
     order_id_code: str
-    product_name: Optional[str]
+    product_name: Optional[str] = None
     product_route_id: str
     quantity_to_produce: int
     priority: int
@@ -109,6 +109,16 @@ class ProductionOrderBase(BaseModel):
         if v and 'arrival_time' in values.data and v < values.data['arrival_time']:
             raise ValueError('due_date must be on or after arrival_time')
         return v
+
+class ProductionOrderImport(BaseModel):
+    order_id_code: str
+    product_name: Optional[str] = None
+    product_route_id: str
+    quantity_to_produce: int
+    priority: int
+    arrival_time: datetime
+    due_date: Optional[datetime] = None
+    current_status: Optional[str] = "pending"
 
 class ProductionOrderCreate(ProductionOrderBase): pass
 class ProductionOrderUpdate(BaseModel): # Partial

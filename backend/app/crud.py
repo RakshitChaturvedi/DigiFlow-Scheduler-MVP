@@ -1,5 +1,6 @@
 import enum
 import logging
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from typing import List, Type, TypeVar, Union, Optional, cast
@@ -18,7 +19,7 @@ from backend.app.models import (
     )
 from backend.app import models
 from backend.app.schemas import (
-    ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut,
+    ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut, ProductionOrderImport,
     ProcessStepCreate, ProcessStepUpdate, ProcessStepOut,
     MachineCreate, MachineUpdate, MachineOut,
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut,
@@ -35,6 +36,41 @@ def create_production_order(db: Session, order_data: ProductionOrderCreate) -> m
     order = ProductionOrder(**order_data.model_dump())
     db.add(order)
     return order
+
+def import_production_orders(db: Session, orders: List[ProductionOrderImport]):
+    seen_ids = set()
+    for order in orders:
+        if order.order_id_code in seen_ids:
+            raise HTTPException(status_code=400, detail=f"Duplicate order_id_code in file: {order.order_id_code}")
+        seen_ids.add(order.order_id_code)
+
+    existing_ids = set(
+        row[0] for row in db.execute(
+            select(ProductionOrder.order_id_code)
+            .where(ProductionOrder.order_id_code.in_(seen_ids))
+        ).all()
+    )
+    if existing_ids:
+        raise HTTPException(
+            status_code=409,
+            detail=f"These order IDs already exist in DB: {', '.join(existing_ids)}"
+        )
+
+    db_orders = [
+        models.ProductionOrder(
+            order_id_code = order.order_id_code,
+            product_name = order.product_name,
+            product_route_id = order.product_route_id,
+            quantity_to_produce = order.quantity_to_produce,
+            priority = order.priority,
+            arrival_time = order.arrival_time,
+            due_date = order.due_date,
+            current_status = order.current_status
+        ) for order in orders
+    ]
+    db.add_all(db_orders)
+    db.commit()
+    return db_orders
 
 def get_production_order(db: Session, order_id: int) -> models.ProductionOrder | None:
     return db.query(models.ProductionOrder).filter(models.ProductionOrder.id == order_id).first()

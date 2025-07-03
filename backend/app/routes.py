@@ -1,12 +1,16 @@
 from pydantic import ValidationError
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Cookie, Request, Query
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import JSONResponse
+
 from sqlalchemy.orm import Session
 from uuid import UUID
 import logging
 import traceback
-from typing import List
+from typing import List, Dict, Any, Sequence, cast, Optional
 from datetime import datetime, timezone
+import pandas as pd
 
 from backend.app import schemas
 from backend.app import crud
@@ -15,7 +19,7 @@ from backend.app.scheduler import load_and_prepare_data_for_ortools, schedule_wi
 from backend.app.database import get_db
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
 from backend.app.schemas import (
-    ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut, # Using ProductionOrderOut
+    ProductionOrderCreate, ProductionOrderUpdate, ProductionOrderOut, ProductionOrderImport, # Using ProductionOrderOut
     MachineCreate, MachineUpdate, MachineOut, # Assuming MachineOut
     ProcessStepCreate, ProcessStepUpdate, ProcessStepOut, # Assuming ProcessStepOut
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, # Assuming DowntimeEventOut
@@ -27,6 +31,7 @@ from backend.app.schemas import (
 from backend.app.crud import get_user_by_email, create_user, get_user_by_id, get_all_users, update_user_by_admin
 from backend.app.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token, ensure_utc_aware
 from backend.app.models import User
+from backend.app.enums import OrderStatus
 from backend.app.dependencies import get_current_active_user, require_admin, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -77,9 +82,110 @@ def create_production_order_endpoint(order_data: schemas.ProductionOrderCreate, 
             detail=f"An internal server error occured: {str(e)}"
         )
 
-@router.get("/orders/", response_model=list[schemas.ProductionOrderOut])
-def get_all_production_orders_endpoint(db:Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    return crud.get_all_production_orders(db)
+@router.post("/orders/import", status_code=201)
+def import_production_orders(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    if not file.filename or not file.filename.endswith(('.csv', '.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Invalid file format. Only CSV or Excel files are supported.")
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file.file)
+            df = df.where(pd.notnull(df), None)  # Replace NaN with None for Pydantic
+            df['product_name'] = df['product_name'].fillna("Unnamed Product")
+            df['product_route_id'] = df['product_route_id'].astype(str)
+            df['due_date'] = pd.to_datetime(df['due_date'], dayfirst=True, errors='coerce')
+            df['due_date'] = df['due_date'].apply(lambda x: x if pd.notnull(x) else None)
+
+            df['arrival_time'] = pd.to_datetime(df['arrival_time'], dayfirst=True, errors='coerce')
+            df['arrival_time'] = df['arrival_time'].apply(lambda x: x if pd.notnull(x) else None)
+
+           
+        else:
+            df = pd.read_excel(file.file)
+            df = df.where(pd.notnull(df), None)  # Replace NaN with None for Pydantic
+            df['product_route_id'] = df['product_route_id'].astype(str)
+            df['product_name'] = df['product_name'].fillna("Unnamed Product")
+            df['due_date'] = pd.to_datetime(df['due_date'], dayfirst=True, errors='coerce')
+            df['due_date'] = df['due_date'].apply(lambda x: x if pd.notnull(x) else None)
+
+            df['arrival_time'] = pd.to_datetime(df['arrival_time'], dayfirst=True, errors='coerce')
+            df['arrival_time'] = df['arrival_time'].apply(lambda x: x if pd.notnull(x) else None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+    
+    try:
+        records = cast(List[Dict[str, Any]], df.to_dict(orient="records"))
+        orders = [ProductionOrderImport(**row) for row in records]
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid data format: {str(e)}")
+    
+    crud.import_production_orders(db, orders)
+    return {"message": f"Successfully imported {len(orders)} production orders. "}
+
+@router.get("/orders/", response_model=List[schemas.ProductionOrderOut])
+def get_filtered_sorted_production_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+
+    # --- Filtering ---
+    product_name: Optional[str] = Query(None),
+    product_route_id: Optional[int] = Query(None),
+    quantity_to_produce: Optional[int] = Query(None),
+    priority: Optional[int] = Query(None),
+    current_status: Optional[List[OrderStatus]] = Query(None),
+    arrival_time: Optional[datetime] = Query(None),
+    due_date: Optional[datetime] = Query(None),
+    progress_min: Optional[int] = Query(None),
+    progress_max: Optional[int] = Query(None),
+
+    # --- Sorting ---
+    sort_by: Optional[str] = Query(
+        None,
+        pattern="^(product_name|product_route_id|quantity_to_produce|priority|arrival_time|due_date|progress|current_status)$"
+    ),
+    sort_dir: Optional[str] = Query("asc", pattern="^(asc|desc)$"),
+
+    # --- Pagination ---
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    query = db.query(models.ProductionOrder)
+
+    # Filters
+    if product_name:
+        query = query.filter(models.ProductionOrder.product_name.ilike(f"%{product_name}%"))
+    if product_route_id is not None:
+        query = query.filter(models.ProductionOrder.product_route_id == product_route_id)
+    if quantity_to_produce is not None:
+        query = query.filter(models.ProductionOrder.quantity_to_produce == quantity_to_produce)
+    if priority is not None:
+        query = query.filter(models.ProductionOrder.priority == priority)
+    if current_status:
+        query = query.filter(models.ProductionOrder.current_status.in_(current_status))
+    if arrival_time is not None:
+        query = query.filter(models.ProductionOrder.arrival_time == arrival_time)
+    if due_date is not None:
+        query = query.filter(models.ProductionOrder.due_date == due_date)
+    if progress_min is not None:
+        query = query.filter(models.ProductionOrder.progress >= progress_min)
+    if progress_max is not None:
+        query = query.filter(models.ProductionOrder.progress <= progress_max)
+
+    # Sorting
+    if sort_by:
+        sort_column = getattr(models.ProductionOrder, sort_by, None)
+        if sort_column is not None:
+            query = query.order_by(sort_column.asc() if sort_dir == "asc" else sort_column.desc())
+
+    # Pagination
+    query = query.offset(offset).limit(limit)
+
+    return query.all()
+
+
 
 @router.get("/orders/{order_id}", response_model=schemas.ProductionOrderOut)
 def get_production_order_endpoint(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
@@ -493,11 +599,33 @@ def register_user(user_data: UserRegister, db: Session = Depends(get_db)):
 @router.post("/user/login", response_model=Token)
 def login_user(login_data: LoginRequest, db: Session = Depends(get_db)):
     user: User = get_user_by_email(db, login_data.email)
+
     if not user or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    token = create_access_token(subject=str(user.email), role=user.role)
-    return {"access_token": token, "token_type": "bearer"}
+
+    # 1. Create both tokens
+    access_token = create_access_token(subject=str(user.email), role=user.role)
+    refresh_token = create_refresh_token(subject=str(user.email))
+
+    # 2. Store hashed refresh token in DB
+    user.refresh_token_hash = hash_password(refresh_token)
+    db.commit()
+
+    # 3. Return access token + set refresh token cookie
+    response = JSONResponse(content={
+        "access_token": access_token,
+        "token_type": "bearer"
+    })
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=False,  # Set to True in production
+        samesite="strict",
+        max_age=7 * 24 * 60 * 60  # 7 days
+    )
+
+    return response
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- AUTHENTICATED ROUTES ---
@@ -545,13 +673,19 @@ def logout_user(db: Session = Depends(get_db), current_user: User = Depends(get_
     return
 
 @router.post("/auth/refresh", response_model=Token)
-def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)):
+def refresh_access_token(request: Request, db: Session = Depends(get_db)):
     try:
+        refresh_token = request.cookies.get("refresh_token")
+        
+        if not refresh_token:
+            raise HTTPException(status_code=401, detail="Refresh token missing")
+        
         payload = decode_refresh_token(refresh_token)
         user = get_user_by_email(db, payload["sub"])
 
         if not user or not user.refresh_token_hash:
             raise HTTPException(status_code=401, detail="Invalid refresh token")
+        
         if not verify_password(refresh_token, user.refresh_token_hash):
             raise HTTPException(status_code=401, detail="Invalid refresh token")
         
