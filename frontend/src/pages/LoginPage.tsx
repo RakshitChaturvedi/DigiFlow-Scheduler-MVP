@@ -60,7 +60,7 @@ function LoginForm() {
       )}
 
       <div>
-        <label className="block text-sm font-medium text-gray-700">Username</label>
+        <label className="block text-sm font-medium text-gray-700">Email</label>
         <input
           type="email"
           value={email}

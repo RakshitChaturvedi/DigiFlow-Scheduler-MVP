@@ -1,4 +1,6 @@
 from datetime import datetime, timezone, timedelta
+from dateutil import parser
+import pytz
 from passlib.context import CryptContext
 from typing import Optional
 import jwt
@@ -7,12 +9,26 @@ from fastapi import HTTPException, status
 
 from backend.app.config import SECRET_KEY, ALGORITHM
 
+INDIA_TZ = pytz.timezone("Asia/Kolkata")
+
 def ensure_utc_aware(dt: datetime) -> datetime:
     if dt is None:
         return None
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+def parse_ist_to_utc(raw_str: str | datetime) -> datetime:
+    if isinstance(raw_str, str):
+        dt = parser.parse(raw_str)
+    elif isinstance(raw_str, datetime):
+        dt = raw_str
+    else:
+        raise ValueError("Unsupported datetime input")
+    
+    if dt.tzinfo is None:
+        dt = INDIA_TZ.localize(dt)
+    return dt.astimezone(pytz.utc)
 
 # --- PASSWORD HASHING AND VERIFICATION --- 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated = "auto")

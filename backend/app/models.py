@@ -114,6 +114,7 @@ class ScheduledTask(Base):
     scheduled_duration_mins = Column(Integer, nullable=False)
     status = Column(String, default="scheduled", nullable=False) #eg Scheduled, InProgress, Delayed etc
     archived = mapped_column(Boolean, default=False)
+    scheduled_time = Column(DateTime, nullable=True)
 
     # RELATIONSHIPS
     # to parent objects
@@ -141,7 +142,7 @@ class DowntimeEvent(Base):
 
     def __repr__(self):
         return(f"<DowntimeEvent(id={self.id}, machine_id={self.machine_id}, "
-               f"start = '{self.start_time.strftime('%Y-%m-%d %H:%M')}, reason = '{self.reason})>")
+               f"start = '{self.start_time.strftime('%Y-%m-%d %H:%M')}, reason = '{self.reason}'>")
 
 # --- JOB LOG MODEL ---    
 class JobLog(Base):

@@ -3,7 +3,7 @@ from uuid import UUID
 from typing import List, Optional, Union
 from datetime import datetime, timezone
 
-from backend.app.enums import OrderStatus, JobLogStatus
+from backend.app.enums import OrderStatus, JobLogStatus, ScheduledTaskStatus
 from backend.app.utils import ensure_utc_aware
 
 # --- 2.3.2 Define ScheduleRequest Schema ---
@@ -21,7 +21,6 @@ class ScheduleRequest(BaseModel):
             datetime: lambda dt: dt.isoformat()
         }
 
-# --- Internal model: Raw scheduled task (DB ↔ Solver ↔ Backend) ---
 class ScheduledTaskInternal(BaseModel):
     """
     Internal format of a scheduled task, closely tied to solver/database
@@ -39,20 +38,41 @@ class ScheduledTaskInternal(BaseModel):
     class Config:
         from_attributes = True
 
-# --- Public model: Client-facing scheduled task (API Response) ---
+class ScheduledTaskProductionOrderInfo(BaseModel):
+    order_id_code: str
+    product_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class ScheduledTaskProcessStepInfo(BaseModel):
+    step_number: int
+    step_name: str
+
+    class Config:
+        from_attributes = True
+
+class ScheduledTaskMachineInfo(BaseModel):
+    machine_id_code: str
+
+    class Config:
+        from_attributes = True
+
 class ScheduledTaskResponse(BaseModel):
     """
     API response model for one scheduled task, adapted for client readability
     """
-    production_order_id: int
-    process_step_id: int
-    assigned_machine_id: int
+    id: int
     start_time: datetime
     end_time: datetime
     scheduled_duration_mins: int
     status: str
     job_id_code: Optional[str] = None
-    step_number: Optional[int] = None
+    scheduled_time: Optional[datetime]
+
+    production_order: ScheduledTaskProductionOrderInfo
+    process_step_definition: ScheduledTaskProcessStepInfo
+    assigned_machine: ScheduledTaskMachineInfo
 
     class Config:
         from_attributes = True
@@ -60,7 +80,6 @@ class ScheduledTaskResponse(BaseModel):
             datetime: lambda dt: dt.isoformat()
         }
 
-# --- Output model: Full API response for /schedule endpoint ---
 class ScheduleOutputResponse(BaseModel):
     """
     Final API response for schedule execution.
@@ -75,6 +94,20 @@ class ScheduleOutputResponse(BaseModel):
         json_encoders = {
             datetime: lambda dt: dt.isoformat()
         }
+
+class ScheduledTaskUpdate(BaseModel):
+    assigned_machine_id: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    status: Optional[str] = None
+
+    @field_validator("status")
+    def lowercase_status(cls, v):
+        return v.lower() if v else v
+
+    class Config:
+        from_attributes = True
+        json_encoders = {datetime: lambda dt: dt.isoformat()}
 
 # --- Production  Order ---
 class ProductionOrderBase(BaseModel):
@@ -231,7 +264,7 @@ class DowntimeEventBase(BaseModel):
         return v
 
 class DowntimeEventImport(BaseModel):
-    machine_id: int
+    machine_id: str
     start_time: datetime
     end_time: datetime
     reason: Optional[str] = None
@@ -279,6 +312,9 @@ class JobLogCreate(JobLogBase):
     process_step_id: int
     machine_id: int
     actual_start_time: datetime
+    actual_end_time: Optional[datetime] = None
+    status: JobLogStatus
+    remarks: Optional[str] = None
 
 class JobLogUpdate(BaseModel):
     # Fixed: Removed Field(...) for optional fields without specific metadata
@@ -331,6 +367,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = Field(default=None, max_length=255)
     password: Optional[str] = Field(default=None, min_length=8, max_length=40)
+    username: Optional[str] = Field(default=None,min_length=3, max_length=255)
     full_name: Optional[str] = Field(default=None, max_length=255)
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
@@ -351,6 +388,7 @@ class UserInDB(UserBase):
 class UserOut(BaseModel):
     id: UUID
     email: EmailStr
+    username: Optional[str] = None
     full_name: Optional[str] = None
     is_active: bool
     role: str

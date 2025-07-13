@@ -40,3 +40,8 @@
 .read-the-docs {
   color: #888;
 }
+
+.btn-primary { @apply bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700; }
+.btn-secondary { @apply bg-gray-300 text-black px-3 py-1 rounded hover:bg-gray-400; }
+.btn-warning { @apply bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600; }
+.btn-danger { @apply bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600; }

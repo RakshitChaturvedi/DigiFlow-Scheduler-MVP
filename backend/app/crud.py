@@ -1,7 +1,7 @@
 import enum
 import logging
 from sqlalchemy import select, tuple_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException, status
 from typing import List, Type, TypeVar, Union, Optional, cast
 from datetime import datetime, timezone
@@ -24,7 +24,8 @@ from backend.app.schemas import (
     MachineCreate, MachineUpdate, MachineOut, MachineImport,
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, DowntimeEventImport,
     JobLogCreate, JobLogUpdate, JobLogOut,
-    UserCreate, UserUpdate, UserUpdateMe, UserOut
+    UserCreate, UserUpdate, UserUpdateMe, UserOut,
+    ScheduledTaskInternal
     )
 from backend.app.enums import OrderStatus, JobLogStatus
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
@@ -210,6 +211,8 @@ def create_downtime_event(db: Session, event_data: schemas.DowntimeEventCreate) 
     return event
 
 def import_downtime_events(db: Session, events: List[DowntimeEventImport]):
+    db_events = []
+
     for event in events:
         if event.end_time <= event.start_time:
             raise HTTPException(
@@ -222,17 +225,27 @@ def import_downtime_events(db: Session, events: List[DowntimeEventImport]):
                 detail=f"Reason is required for downtime event on machine ID {event.machine_id}"
             )
 
-    db_events = [
-        models.DowntimeEvent(
-            machine_id=event.machine_id,
+        # 🔍 Resolve actual DB ID from machine_id_code
+        machine = db.query(models.Machine).filter_by(machine_id_code=event.machine_id).first()
+        if not machine:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Machine with code '{event.machine_id}' not found in DB."
+            )
+
+        # ✅ Create event using actual DB machine ID
+        db_event = models.DowntimeEvent(
+            machine_id=machine.id,
             start_time=event.start_time,
             end_time=event.end_time,
             reason=event.reason
-        ) for event in events
-    ]
+        )
+        db_events.append(db_event)
+
     db.add_all(db_events)
     db.commit()
     return db_events
+
 
 def get_downtime_event(db:Session, event_id: int) -> models.DowntimeEvent | None:
     return db.query(models.DowntimeEvent).filter(models.DowntimeEvent.id == event_id).first()
@@ -276,6 +289,29 @@ def delete_job_log(db: Session, db_obj: models.JobLog):
     db.delete(db_obj)
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- SCHEDULED TASKS --- 
+def get_scheduled_tasks(db: Session, skip: int=0, limit: int=100) -> List[ScheduledTask]:
+    # Retrieve a list of scheduled tasks with eager loaded related data.
+    return (
+        db.query(ScheduledTask).options(
+            joinedload(ScheduledTask.production_order),
+            joinedload(ScheduledTask.process_step_definition),
+            joinedload(ScheduledTask.assigned_machine)
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+def create_scheduled_task(db: Session, task: ScheduledTaskInternal) -> ScheduledTask:
+    # Create a new scheduled task in database
+    db_task = ScheduledTask(**task.model_dump())
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
+    return db_task
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- USER --- 
 def get_user_by_email(db: Session, email: str) -> Optional[User]:
     return db.query(User).filter(User.email == email).first()
@@ -296,7 +332,7 @@ def create_user(db: Session, user_in: UserCreate) -> User:
         email = user_in.email,
         hashed_password = hashed_pw,
         full_name = user_in.full_name,
-        is_active = True,
+        is_active = user_in.is_active,
         role = user_in.role,
         is_superuser = user_in.is_superuser,
     )
@@ -353,8 +389,6 @@ def update_user_password(db: Session, db_user: User, current_pw: str, new_pw: st
     db.commit()
     db.refresh(db_user)
     return db_user
-    
-
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- VALID STATUS TRANSITIONS ---

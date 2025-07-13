@@ -10,6 +10,10 @@ import ProtectedRoute from './auth/ProtectedRoute';
 import { useAuth } from './auth/AuthContext';
 import Machines from './pages/Machines';
 import ProcessSteps from './pages/ProcessSteps';
+import DowntimeEvents from './pages/DowntimeEvents';
+import SchedulePage from './pages/Schedule';
+import JobLogsPage from './pages/JobLog';
+import UsersPage from './pages/Users';
 
 const MainLayout = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
@@ -65,8 +69,12 @@ const MainLayout = () => {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/production-orders" element={<ProductionOrders />} />
+            <Route path='/schedule' element={<SchedulePage />} />
+            <Route path='/job-log' element={<JobLogsPage />} />
             <Route path='/machines' element={<Machines />} />
             <Route path='/processes' element={<ProcessSteps />} />
+            <Route path='/downtime-events' element={<DowntimeEvents />} />
+            <Route path='/users' element={<UsersPage />} />
             {/* ... other protected routes */}
             <Route path="*" element={<Navigate to="/dashboard" />} />
           </Routes>

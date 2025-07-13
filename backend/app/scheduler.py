@@ -396,13 +396,14 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
                 task_obj.start_time = task_data['start_time']
                 task_obj.end_time = task_data['end_time']
                 task_obj.scheduled_duration_mins = task_data['scheduled_duration_mins']
-                task_obj.status = task_data.get('status', 'Scheduled')
+                task_obj.status = task_data.get('status', 'scheduled')
                 db.add(task_obj)
                 persisted_scheduled_tasks.append(task_obj)
                 logger.debug(f"Updated existing ScheduledTask ID: {task_obj.id} for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
             else:
                 # This is a new task to be scheduled
                 filtered_data = {k: v for k, v in task_data.items() if k in scheduled_task_allowed_keys}
+                filtered_data['status'] = filtered_data.get('status', 'scheduled').lower()
                 new_task = ScheduledTask(archived=False, **filtered_data)
                 db.add(new_task)
                 persisted_scheduled_tasks.append(new_task)
@@ -438,20 +439,10 @@ def save_scheduled_tasks_to_db(db: Session, scheduled_tasks_data: List[Dict]) ->
                 db.add(new_job_log)
                 logger.debug(f"Created new JobLog for PO:{po_id}, PS:{ps_id}, M:{machine_id}.")
 
-        """
-        # Delete old 'Scheduled' tasks that were not part of the new schedule
-        for key, old_task_obj in existing_scheduled_tasks_map.items():
-            if old_task_obj.status == 'Scheduled':
-                db.delete(old_task_obj)
-                logger.debug(f"Deleted old ScheduledTask ID:{old_task_obj.id} (no longer in new schedule).")
-            else:
-                logger.warning(f"Did not delete old ScheduledTask ID:{old_task_obj.id} with status '{old_task_obj.status}' as it was not 'Scheduled'.")
-        """
         # Update parent ProductionOrder statuses
         if newly_scheduled_po_ids:
             db.query(ProductionOrder).filter(
-                ProductionOrder.id.in_(newly_scheduled_po_ids),
-                ProductionOrder.current_status == OrderStatus.PENDING
+                ProductionOrder.id.in_(newly_scheduled_po_ids)
             ).update({'current_status': OrderStatus.SCHEDULED}, synchronize_session=False)
             logger.info(f"Updated {len(newly_scheduled_po_ids)} Production Orders from PENDING to SCHEDULED.")
 

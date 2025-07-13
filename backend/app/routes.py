@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadF
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from uuid import UUID
 import logging
 import traceback
@@ -24,13 +24,13 @@ from backend.app.schemas import (
     ProcessStepCreate, ProcessStepUpdate, ProcessStepOut, # Assuming ProcessStepOut
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, # Assuming DowntimeEventOut
     ProductionOrderStatusUpdate, JobLogStatusUpdate,
-    JobLogOut,
-    ScheduleRequest, ScheduleOutputResponse, ScheduledTaskResponse,
+    JobLogOut, JobLogCreate,
+    ScheduleRequest, ScheduleOutputResponse, ScheduledTaskResponse, ScheduledTaskUpdate,
     UserOut, LoginRequest, UserRegister, Token, UserCreate, UserUpdate, UserUpdateMe, UpdatePassword
 )
 from backend.app.crud import get_user_by_email, create_user, get_user_by_id, get_all_users, update_user_by_admin
-from backend.app.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token, ensure_utc_aware
-from backend.app.models import User
+from backend.app.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token, ensure_utc_aware, parse_ist_to_utc
+from backend.app.models import User, ScheduledTask, JobLog
 from backend.app.enums import OrderStatus
 from backend.app.dependencies import get_current_active_user, require_admin, get_current_user
 
@@ -57,12 +57,17 @@ def who_am_i(current_user: User = Depends(get_current_user)):
 # --- PRODUCTION ORDER ---
 @router.post("/orders/", response_model=schemas.ProductionOrderOut, status_code=status.HTTP_201_CREATED)
 def create_production_order_endpoint(order_data: schemas.ProductionOrderCreate, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    
     existing_order = crud.get_production_order_by_code(db, order_id_code=order_data.order_id_code)
     if existing_order:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Production order with code '{order_data.order_id_code}' already exists."
         )
+    
+    order_data.arrival_time = parse_ist_to_utc(order_data.arrival_time)
+    if order_data.due_date:
+        order_data.due_date = parse_ist_to_utc(order_data.due_date)
     
     try:
         order = crud.create_production_order(db, order_data)
@@ -97,10 +102,10 @@ def import_production_orders(
             df['product_name'] = df['product_name'].fillna("Unnamed Product")
             df['product_route_id'] = df['product_route_id'].astype(str)
             df['due_date'] = pd.to_datetime(df['due_date'], dayfirst=True, errors='coerce')
-            df['due_date'] = df['due_date'].apply(lambda x: x if pd.notnull(x) else None)
+            df['due_date'] = df['due_date'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
 
             df['arrival_time'] = pd.to_datetime(df['arrival_time'], dayfirst=True, errors='coerce')
-            df['arrival_time'] = df['arrival_time'].apply(lambda x: x if pd.notnull(x) else None)
+            df['arrival_time'] = df['arrival_time'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
 
            
         else:
@@ -109,10 +114,10 @@ def import_production_orders(
             df['product_route_id'] = df['product_route_id'].astype(str)
             df['product_name'] = df['product_name'].fillna("Unnamed Product")
             df['due_date'] = pd.to_datetime(df['due_date'], dayfirst=True, errors='coerce')
-            df['due_date'] = df['due_date'].apply(lambda x: x if pd.notnull(x) else None)
+            df['due_date'] = df['due_date'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
 
             df['arrival_time'] = pd.to_datetime(df['arrival_time'], dayfirst=True, errors='coerce')
-            df['arrival_time'] = df['arrival_time'].apply(lambda x: x if pd.notnull(x) else None)
+            df['arrival_time'] = df['arrival_time'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
     
@@ -202,6 +207,11 @@ def update_production_order_endpoint(order_id: int, update_data: schemas.Product
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Production order not found."
         )
+    
+    if update_data.arrival_time:
+        update_data.arrival_time = parse_ist_to_utc(update_data.arrival_time)
+    if update_data.due_date:
+        update_data.due_date = parse_ist_to_utc(update_data.due_date)
     
     try:
         updated_order = crud.update_production_order(db, db_obj=db_order, order_update=update_data)
@@ -419,6 +429,9 @@ def delete_machine_endpoint(machine_id: int, db: Session = Depends(get_db), curr
 @router.post("/downtimes/", response_model=schemas.DowntimeEventOut, status_code=status.HTTP_201_CREATED)
 def create_downtime_event_endpoint(event_data: schemas.DowntimeEventCreate, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     try:
+        event_data.start_time = parse_ist_to_utc(event_data.start_time)
+        event_data.end_time = parse_ist_to_utc(event_data.end_time)
+
         event = crud.create_downtime_event(db, event_data)
         db.commit()
         db.refresh(event)
@@ -433,7 +446,7 @@ def create_downtime_event_endpoint(event_data: schemas.DowntimeEventCreate, db: 
             detail=f"An internal server error occured: {str(e)}"
         )
 
-@router.post("/downtime-events/import", status_code=201)
+@router.post("/downtimes/import", status_code=201)
 def import_downtime_events(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -449,8 +462,13 @@ def import_downtime_events(
             df = pd.read_excel(file.file)
 
         df = df.where(pd.notnull(df), None)
+
         df['start_time'] = pd.to_datetime(df['start_time'], dayfirst=True, errors='coerce')
         df['end_time'] = pd.to_datetime(df['end_time'], dayfirst=True, errors='coerce')
+
+        df['start_time'] = df['start_time'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
+        df['end_time'] = df['end_time'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
+
         df['reason'] = df['reason'].fillna("No reason specified")
 
     except Exception as e:
@@ -482,6 +500,11 @@ def update_downtime_event_endpoint(event_id: int, update_data: schemas.DowntimeE
     if not db_event:
         raise HTTPException(status_code=404, detail="Downtime event not found")
     try:
+        if update_data.start_time:
+            update_data.start_time = parse_ist_to_utc(update_data.start_time)
+        if update_data.end_time:
+            update_data.end_time = parse_ist_to_utc(update_data.end_time)
+
         updated_event = crud.update_downtime_event(db, db_obj=db_event, event_update=update_data)
         db.commit()
         db.refresh(updated_event)
@@ -509,6 +532,10 @@ def delete_downtime_event_endpoint(event_id: int, db: Session = Depends(get_db),
 @router.post("/job_logs/", response_model=JobLogOut, status_code=status.HTTP_201_CREATED)
 def create_job_log_endpoint(job_log_data: schemas.JobLogCreate, db: Session = Depends(get_db_session), current_user: User = Depends(require_admin)):
     try:
+        job_log_data.actual_start_time = parse_ist_to_utc(job_log_data.actual_start_time)
+        if job_log_data.actual_end_time:
+            job_log_data.actual_end_time = parse_ist_to_utc(job_log_data.actual_end_time)
+
         db_job_log = crud.create_job_log(db=db, job_log_data=job_log_data)
         db.commit()
         db.refresh(db_job_log)
@@ -540,6 +567,11 @@ def update_job_log_endpoint(job_log_id: int, update_data: schemas.JobLogUpdate, 
     if not db_job_log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job Log not found.")
     try:
+        if update_data.actual_start_time:
+            update_data.actual_start_time = parse_ist_to_utc(update_data.actual_start_time)
+        if update_data.actual_end_time:
+            update_data.actual_end_time = parse_ist_to_utc(update_data.actual_end_time)
+
         updated_job_log = crud.update_job_log(db, db_obj=db_job_log, job_log_update=update_data)
         db.commit()
         db.refresh(updated_job_log)
@@ -598,7 +630,87 @@ def trigger_schedule_endpoint(
         return ScheduleOutputResponse(status=status, makespan_minutes=makespan, scheduled_tasks=response_tasks,
                                       message="Schedule successfully generated and saved.")
     except Exception as e:
+        import logging
+        logging.exception(f"Scheduler error in trigger_schedule_endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Scheduler error: {str(e)}")
+
+@router.get("/schedule", response_model=List[ScheduledTaskResponse], tags=["Scheduling"])
+def get_scheduled_tasks(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    tasks = db.query(ScheduledTask).filter(ScheduledTask.archived == False, ScheduledTask.status.in_(["pending", "scheduled", "in_progress"])).options(
+        joinedload(ScheduledTask.production_order),
+        joinedload(ScheduledTask.process_step_definition),
+        joinedload(ScheduledTask.assigned_machine)
+    ).offset(skip).limit(limit).all()
+    return [ScheduledTaskResponse.model_validate(task) for task in tasks]
+
+@router.put("/schedule/{task_id}", response_model=ScheduledTaskResponse, tags=["Scheduling"])
+def updae_scheduled_task(
+    task_id: int,
+    update_data: schemas.ScheduledTaskUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    
+    original_status = task.status
+    for attr, value in update_data.model_dump(exclude_unset=True).items():
+        setattr(task, attr, value)
+
+    new_status = update_data.status
+    if original_status == "pending" and new_status == "scheduled":
+        task.scheduled_time = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(task)
+
+    if original_status != task.status and task.status in ["completed", "cancelled"]:
+        existing_log = db.query(JobLog).filter_by(
+            production_order_id = task.production_order_id,
+            process_step_id = task.process_step_id,
+            machine_id = task.assigned_machine_id,
+            status = task.status
+        ).first()
+
+        if not existing_log:
+            try:
+                job_log_data = JobLogCreate(
+                    production_order_id=task.production_order_id,
+                    process_step_id=task.process_step_id,
+                    machine_id=task.assigned_machine_id,
+                    actual_start_time= task.start_time or task.scheduled_time,
+                    actual_end_time=task.end_time or datetime.now(timezone.utc),
+                    status= task.status,
+                    remarks=None
+                )
+                job_log = crud.create_job_log(db, job_log_data)
+                db.commit()
+                db.refresh(job_log)
+            except Exception as e:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"Failed to create job log: {str(e)}")
+
+    return ScheduledTaskResponse.model_validate(task)
+
+@router.delete("/schedule/{task_id}", status_code=204, tags=["Scheduling"])
+def delete_scheduled_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task: 
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    
+    db.delete(task)
+    db.commit()
+    return Response(status_code=204)
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- STATUS TRANSITIONS ---
@@ -712,9 +824,10 @@ def login_user(login_data: LoginRequest, db: Session = Depends(get_db)):
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,  # Set to True in production
-        samesite="strict",
-        max_age=7 * 24 * 60 * 60  # 7 days
+        secure=True,  # Set to True in production
+        samesite="none",
+        max_age=7 * 24 * 60 * 60,  # 7 days
+        path="/"
     )
 
     return response
@@ -785,10 +898,20 @@ def refresh_access_token(request: Request, db: Session = Depends(get_db)):
         return Token(access_token=new_access_token, token_type="bearer")
     
     except Exception as e:
-        HTTPException(status_code=401, detail="Could not refresh token")
+        raise HTTPException(status_code=401, detail="Could not refresh token")
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- ADMIN ROUTES ---
+@router.post("/admin/users", response_model=UserOut, status_code=201)
+def create_user_admin(user_data: UserCreate, db: Session=Depends(get_db), current_user: User = Depends(require_admin)):
+    if get_user_by_email(db, user_data.email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    try:
+        return create_user(db, user_data)
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=ve.errors())
+    
+
 @router.get("/admin/users", response_model=list[UserOut])
 def list_all_users(db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     return get_all_users(db)
@@ -806,3 +929,12 @@ def admin_update_user( user_id: UUID, updates: UserUpdate, db: Session = Depends
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return update_user_by_admin(db, user, updates)
+
+@router.delete("/admin/users/{user_id}", status_code=204)
+def delete_user(user_id: UUID, db: Session = Depends(get_db), current_user = Depends(require_admin)):
+    user = get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.delete(user)
+    db.commit()
+    return

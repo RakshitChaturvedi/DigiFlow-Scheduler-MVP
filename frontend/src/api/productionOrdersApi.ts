@@ -1,8 +1,6 @@
-// src/api/productionOrdersApi.js
 import apiClient from './axios';
-import qs from 'qs'
+import { formatInTimeZone } from 'date-fns-tz';
 
-// src/api/productionOrdersApi.ts
 export interface ProductionOrderData {
   id: number;
   order_id_code: string;
@@ -12,7 +10,7 @@ export interface ProductionOrderData {
   priority: number;
   arrival_time: string;
   due_date: string | null;
-  current_status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  current_status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'scheduled';
   created_at: string;
   updated_at: string;
   progress?: number;
@@ -28,6 +26,13 @@ export interface ProductionOrderFilters {
   filter_by_progress_max?: string;
 }
 
+// ✅ Timezone conversion: IST → UTC ISO string
+const convertIstToUtcIso = (datetimeStr: string): string => {
+  const date = new Date(datetimeStr);
+  return formatInTimeZone(date, 'UTC', "yyyy-MM-dd'T'HH:mm:ssXXX");
+};
+
+// ✅ GET production orders with filters
 export const getProductionOrders = async (
   filters: ProductionOrderFilters = {}
 ): Promise<ProductionOrderData[]> => {
@@ -49,13 +54,50 @@ export const getProductionOrders = async (
 
   return data.map(order => ({
     ...order,
-    progress: order.progress ?? Math.floor(Math.random() * 101),
+    progress: order.progress ?? Math.floor(Math.random() * 101), // fallback progress
   }));
 };
 
-
-
-export const deleteProductionOrder = async (id:number): Promise<void> => {
-  await apiClient.delete(`/api/orders/${id}`);
+// ✅ CREATE production order
+export const createProductionOrder = async (
+  data: Omit<ProductionOrderData, 'id' | 'created_at' | 'updated_at' | 'current_status'>
+): Promise<ProductionOrderData> => {
+  const payload = {
+    ...data,
+    arrival_time: convertIstToUtcIso(data.arrival_time),
+    due_date: data.due_date ? convertIstToUtcIso(data.due_date) : null,
+  };
+  const response = await apiClient.post('/api/orders/', payload);
+  return response.data;
 };
 
+// ✅ UPDATE production order
+export const updateProductionOrder = async (
+  id: number,
+  data: Partial<Omit<ProductionOrderData, 'id' | 'created_at' | 'updated_at' | 'current_status'>>
+): Promise<ProductionOrderData> => {
+  const payload = {
+    ...data,
+    arrival_time: data.arrival_time ? convertIstToUtcIso(data.arrival_time) : undefined,
+    due_date: data.due_date ? convertIstToUtcIso(data.due_date) : undefined,
+  };
+  const response = await apiClient.put(`/api/orders/${id}`, payload);
+  return response.data;
+};
+
+// ✅ IMPORT (no conversion needed — backend handles it)
+export const importProductionOrders = async (file: File): Promise<{ message: string }> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await apiClient.post('/api/orders/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+  return response.data;
+};
+
+// ✅ DELETE production order
+export const deleteProductionOrder = async (id: number): Promise<void> => {
+  await apiClient.delete(`/api/orders/${id}`);
+};

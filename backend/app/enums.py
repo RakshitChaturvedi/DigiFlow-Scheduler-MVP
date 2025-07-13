@@ -3,6 +3,7 @@ from enum import Enum
 class OrderStatus(str, Enum):
     PENDING = "pending"
     SCHEDULED = "scheduled"
+    PAUSED = "paused"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
@@ -10,6 +11,7 @@ class OrderStatus(str, Enum):
 class ScheduledTaskStatus(str, Enum):
     PENDING = "pending"
     SCHEDULED = "scheduled"
+    PAUSED = "paused"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
@@ -20,8 +22,8 @@ class JobLogStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     PAUSED = "paused"
     COMPLETED = "completed"
-    FAILED = "failed"
     CANCELLED = "cancelled"
+    FAILED = "failed"
 
     def __str__(self):
         return self.value
