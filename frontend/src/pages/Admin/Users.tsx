@@ -8,9 +8,9 @@ import {
   createUser,
   deleteUser,
   resetUserPassword,
-} from '../api/usersApi';
-import { type UserData, type UserCreateInput, type UserUpdateInput } from '../types/users';
-import UserModal from '../components/UserModal';
+} from '../../api/usersApi';
+import { type UserData, type UserCreateInput, type UserUpdateInput } from '../../types/users';
+import UserModal from '../../components/UserModal';
 import { useMutation } from '@tanstack/react-query';
 
 const UsersPage: React.FC = () => {

@@ -26,12 +26,13 @@ from backend.app.schemas import (
     ProductionOrderStatusUpdate, JobLogStatusUpdate,
     JobLogOut, JobLogCreate,
     ScheduleRequest, ScheduleOutputResponse, ScheduledTaskResponse, ScheduledTaskUpdate,
-    UserOut, LoginRequest, UserRegister, Token, UserCreate, UserUpdate, UserUpdateMe, UpdatePassword
+    UserOut, LoginRequest, UserRegister, Token, UserCreate, UserUpdate, UserUpdateMe, UpdatePassword,
+    OperatorTaskUpdate
 )
 from backend.app.crud import get_user_by_email, create_user, get_user_by_id, get_all_users, update_user_by_admin
 from backend.app.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token, ensure_utc_aware, parse_ist_to_utc
 from backend.app.models import User, ScheduledTask, JobLog
-from backend.app.enums import OrderStatus
+from backend.app.enums import OrderStatus, ScheduledTaskStatus
 from backend.app.dependencies import get_current_active_user, require_admin, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -938,3 +939,125 @@ def delete_user(user_id: UUID, db: Session = Depends(get_db), current_user = Dep
     db.delete(user)
     db.commit()
     return
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- Operator Workflow Router ---
+
+operator_router = APIRouter(prefix="/api/operators", tags=["Operator Workflow"])
+
+@operator_router.get("/my-machines", response_model=List[schemas.OperatorMachineOut])
+def get_my_authorized_machines(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """
+    Endpoint for the Machine Selection screen.
+    Returns a list of all active machines.
+    """
+    # Simplified for MVP: returns all active machines.
+    # Future enhancement: return current_user.authorized_machines
+    active_machines = db.query(models.Machine).filter(models.Machine.is_active == True).all()
+    return active_machines
+
+
+@operator_router.get("/{machine_id_code}/queue", response_model=schemas.MachineQueueResponse)
+def get_operator_machine_queue(
+    machine_id_code: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Endpoint for the main Operator Task View."""
+    machine = crud.get_machine_by_code(db, machine_id_code)
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    # In a future version, you would add a check here to ensure the current_user is in machine.authorized_operators
+
+    current_job_db, next_job_db = crud.get_machine_queue(db, machine_id_code)
+
+    def map_job_to_schema(job: Optional[models.ScheduledTask]) -> Optional[schemas.OperatorJobOut]:
+        if not job:
+            return None
+        return schemas.OperatorJobOut(
+            id=job.id,
+            job_id_code=job.job_id_code,
+            product_name=job.production_order.product_name,
+            quantity_to_produce=job.production_order.quantity_to_produce,
+            priority=job.production_order.priority,
+            status=job.status
+        )
+
+    return schemas.MachineQueueResponse(
+        machine_name=machine.machine_id_code,
+        current_job=map_job_to_schema(current_job_db),
+        next_job=map_job_to_schema(next_job_db)
+    )
+
+# --- Task Action Router for Operators ---
+task_action_router = APIRouter(prefix="/api/scheduled-tasks", tags=["Operator Task Actions"])
+
+@task_action_router.post("/{task_id}/start", status_code=status.HTTP_204_NO_CONTENT)
+def start_scheduled_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Endpoint for the operator to press the 'START JOB' button."""
+    task = crud.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != ScheduledTaskStatus.SCHEDULED:
+        raise HTTPException(status_code=409, detail=f"Cannot start task with status '{task.status.value}'")
+
+    task.status = ScheduledTaskStatus.IN_PROGRESS
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@task_action_router.post("/{task_id}/finish", status_code=status.HTTP_204_NO_CONTENT)
+def finish_scheduled_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Endpoint for the operator to press the 'FINISH JOB' button."""
+    task = crud.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != ScheduledTaskStatus.IN_PROGRESS:
+        raise HTTPException(status_code=409, detail=f"Cannot finish task with status '{task.status.value}'")
+
+    task.status = ScheduledTaskStatus.COMPLETED
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@task_action_router.post("/{task_id}/report-issue", status_code=status.HTTP_204_NO_CONTENT)
+def report_task_issue(
+    task_id: int,
+    issue_data: schemas.ReportIssueRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Endpoint for the operator to press the 'REPORT ISSUE' button."""
+    task = crud.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.status = ScheduledTaskStatus.BLOCKED
+    task.block_reason = issue_data.reason
+
+    # Create a corresponding DowntimeEvent
+    downtime_event = models.DowntimeEvent(
+        machine_id=task.assigned_machine_id,
+        start_time=datetime.now(timezone.utc),
+        end_time=datetime.now(timezone.utc), # End time can be updated later when the issue is resolved
+        reason=f"OPERATOR REPORT: {issue_data.reason}",
+        comments=issue_data.comments
+    )
+    db.add(downtime_event)
+    
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

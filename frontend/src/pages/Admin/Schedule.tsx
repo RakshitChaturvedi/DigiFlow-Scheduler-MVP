@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getScheduledTasks, deleteScheduledTask, updateScheduledTask, type ScheduledTaskData } from '../api/scheduledTaskApi';
+import { getScheduledTasks, deleteScheduledTask, updateScheduledTask, type ScheduledTaskData } from '../../api/scheduledTaskApi';
 import { toast } from 'react-toastify'; // Not used in this snippet
-import { queryClient } from '../lib/react-query';
-import EditScheduledTaskModal from '../components/EditScheduleTaskModal';
+import { queryClient } from '../../lib/react-query';
+import EditScheduledTaskModal from '../../components/EditScheduleTaskModal';
 
 const SchedulePage: React.FC = () => {
   // const navigate = useNavigate(); // If you need navigation, keep this

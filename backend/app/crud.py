@@ -27,7 +27,7 @@ from backend.app.schemas import (
     UserCreate, UserUpdate, UserUpdateMe, UserOut,
     ScheduledTaskInternal
     )
-from backend.app.enums import OrderStatus, JobLogStatus
+from backend.app.enums import OrderStatus, JobLogStatus, ScheduledTaskStatus
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
 from backend.app.utils import hash_password, verify_password
 
@@ -505,7 +505,35 @@ def check_and_update_production_order_completion(db: Session, production_order_i
     else:
         print(f"Not all JobLogs for Production Order {production_order_id} are completed. Production Order status remains {production_order.current_status.value}.")
 
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- OPERATOR-SPECIFIC ---
+def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[models.ScheduledTask], Optional[models.ScheduledTask]]:
+    """
+    Finds the current (IN_PROGRESS) and next (SCHEDULED) job for a given machine.
+    Eagerly loads related data to prevent N+1 queries.
+    """
+    machine = get_machine_by_code(db, machine_id_code)
+    if not machine:
+        return None, None
 
-    
-    
+    # Find the job that is currently running on this machine
+    current_job = db.query(models.ScheduledTask).options(
+        joinedload(models.ScheduledTask.production_order)
+    ).filter(
+        models.ScheduledTask.assigned_machine_id == machine.id,
+        models.ScheduledTask.status == ScheduledTaskStatus.IN_PROGRESS
+    ).order_by(models.ScheduledTask.start_time).first()
 
+    # Find the next scheduled job for this machine
+    next_job = db.query(models.ScheduledTask).options(
+        joinedload(models.ScheduledTask.production_order)
+    ).filter(
+        models.ScheduledTask.assigned_machine_id == machine.id,
+        models.ScheduledTask.status == ScheduledTaskStatus.SCHEDULED
+    ).order_by(models.ScheduledTask.start_time).first()
+
+    return current_job, next_job
+
+def get_task_by_id(db: Session, task_id: int) -> Optional[models.ScheduledTask]:
+    """Gets a single scheduled task by its primary key ID."""
+    return db.query(models.ScheduledTask).filter(models.ScheduledTask.id == task_id).first()

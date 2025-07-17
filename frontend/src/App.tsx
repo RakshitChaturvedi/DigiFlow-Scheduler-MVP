@@ -1,70 +1,53 @@
-import { useState, useEffect } from 'react';
-import { Routes, Route, useLocation, Navigate } from 'react-router-dom'; // Import routing hooks and components
+import { useState } from 'react';
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { useAuth } from './auth/AuthContext';
+import ProtectedRoute from './auth/ProtectedRoute';
+
+/* --- Layout Components --- */
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
-import Dashboard from './pages/Dashboard';
-import Analytics from './pages/Analytics'; // Import the Analytics page component
-import ProductionOrders from './pages/ProductionOrders';
-import LoginPage from './pages/LoginPage';
-import ProtectedRoute from './auth/ProtectedRoute';
-import { useAuth } from './auth/AuthContext';
-import Machines from './pages/Machines';
-import ProcessSteps from './pages/ProcessSteps';
-import DowntimeEvents from './pages/DowntimeEvents';
-import SchedulePage from './pages/Schedule';
-import JobLogsPage from './pages/JobLog';
-import UsersPage from './pages/Users';
 
+/* --- Page Imports --- */
+// Admin Pages
+import Dashboard from './pages/Admin/Dashboard';
+import Analytics from './pages/Admin/Analytics';
+import ProductionOrders from './pages/Admin/ProductionOrders';
+import LoginPage from './pages/Admin/LoginPage';
+import Machines from './pages/Admin/Machines';
+import ProcessSteps from './pages/Admin/ProcessSteps';
+import DowntimeEvents from './pages/Admin/DowntimeEvents';
+import SchedulePage from './pages/Admin/Schedule';
+import JobLogsPage from './pages/Admin/JobLog';
+import UsersPage from './pages/Admin/Users';
+
+// Operator Pages
+import OperatorLogin from './pages/Operator/OperatorLogin';
+import MachineSelectPage from './pages/Operator/MachineSelect';
+import MachineTaskPage from './pages/Operator/MachineTask';
+
+/**
+ * MainLayout is the shell for the entire authenticated ADMIN experience.
+ * It includes the sidebar and top bar.
+ */
 const MainLayout = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const location = useLocation();
 
-  // Function to determine the page title based on the current path
   const getPageTitle = (pathname: string): string => {
-    switch (pathname) {
-      case '/dashboard':
-        return 'Dashboard';
-      case '/analytics':
-        return 'Analytics & Reporting';
-      // Add cases for other pages as you create them
-      case '/production-orders':
-        return 'Production Orders';
-      case '/job-log':        
-        return 'Job Log';
-      case '/schedule':        
-        return 'Schedule';        
-      case '/machines':
-        return 'Machines Configuration';
-      case '/processes':
-        return 'Process Steps Configuration';
-      case '/downtime-events':
-        return 'Downtime Events Management';
-      case '/users':
-        return 'User Administration';
-      default:
-        return 'DigiFlow App';
-    }
+    const path = pathname.split('/').pop()?.replace('-', ' ') || 'Dashboard';
+    return path.charAt(0).toUpperCase() + path.slice(1);
   };
-  const [currentPageTitle, setCurrentPageTitle] = useState<string>(getPageTitle(location.pathname));
 
-  useEffect(() => {
-    setCurrentPageTitle(getPageTitle(location.pathname));
-  }, [location.pathname]);
-
-  const toggleSidebar = (): void => {
-    setIsSidebarOpen(!isSidebarOpen);
-  };
+  const toggleSidebar = (): void => setIsSidebarOpen(!isSidebarOpen);
 
   return (
-    <div className="flex min-h-screen bg-backgroundLight">
-      {isSidebarOpen && <div className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden" onClick={toggleSidebar}></div>}
+    <div className="flex min-h-screen bg-gray-100">
       <div className={`fixed inset-y-0 left-0 z-50 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 transition-transform duration-300 ease-in-out`}>
-        <Sidebar currentPath={location.pathname} onNavLinkClick={toggleSidebar} />
+        <Sidebar currentPath={location.pathname} onNavLinkClick={() => setIsSidebarOpen(false)} />
       </div>
       <div className="flex-1 flex flex-col h-screen">
-        <TopBar pageTitle={currentPageTitle} onMenuToggle={toggleSidebar} />
+        <TopBar pageTitle={getPageTitle(location.pathname)} onMenuToggle={toggleSidebar} />
         <main className="flex-1 p-4 md:p-6 overflow-auto">
-          {/* The protected routes are now inside the MainLayout */}
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/analytics" element={<Analytics />} />
@@ -75,33 +58,52 @@ const MainLayout = () => {
             <Route path='/processes' element={<ProcessSteps />} />
             <Route path='/downtime-events' element={<DowntimeEvents />} />
             <Route path='/users' element={<UsersPage />} />
-            {/* ... other protected routes */}
-            <Route path="*" element={<Navigate to="/dashboard" />} />
+            {/* Redirect any other admin path to dashboard */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>
       </div>
     </div>
   );
+};
 
-}
-
+/**
+ * The main App component now acts as a top-level router,
+ * directing users based on their authentication status and role.
+ */
 function App() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, userRole } = useAuth();
 
   return (
     <Routes>
-      {/* Publicly accessible login route */}
-      <Route path='/login' element={<LoginPage />} />
+      {/* --- Public Routes --- */}
+      {/* These routes are accessible to everyone. */}
+      <Route path="/login" element={!isAuthenticated ? <LoginPage /> : <Navigate to="/dashboard" />} />
+      <Route path="/operator/login" element={!isAuthenticated ? <OperatorLogin /> : <Navigate to="/operator/select-machine" />} />
 
-      {/* All other protected routes */}
+      {/* --- Protected Routes --- */}
+      {/* The "/*" path catches all other routes. The ProtectedRoute component will handle redirection. */}
       <Route 
-        path='/*' 
+        path="/*" 
         element={
           <ProtectedRoute>
-            <MainLayout />
+            <>
+              {/* Once authenticated, we check the role to render the correct UI */}
+              {(userRole === 'admin' || userRole === 'manager') && <MainLayout />}
+              
+              {userRole === 'operator' && (
+                <Routes>
+                  <Route path="/operator/select-machine" element={<MachineSelectPage />} />
+                  <Route path="/operator/task/:machineIdCode" element={<MachineTaskPage />} />
+                  
+                  {/* Any other operator path redirects to machine selection */}
+                  <Route path="*" element={<Navigate to="/operator/select-machine" replace />} />
+                </Routes>
+              )}
+            </>
           </ProtectedRoute>
-        }
-      />  
+        } 
+      />
     </Routes>
   );
 }

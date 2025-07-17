@@ -1,10 +1,41 @@
 from pydantic import BaseModel, field_validator, ConfigDict, Field, EmailStr
 from uuid import UUID
-from typing import List, Optional, Union
+from typing import List, Optional, Literal
 from datetime import datetime, timezone
 
 from backend.app.enums import OrderStatus, JobLogStatus, ScheduledTaskStatus
 from backend.app.utils import ensure_utc_aware
+
+# --- Operator-Specific Schemas ---
+class OperatorMachineOut(BaseModel):
+    """A simplified view of a machine for the selection screen."""
+    id: int
+    machine_id_code: str
+    machine_type: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class OperatorJobOut(BaseModel):
+    """A simplified view of a scheduled task for the operator UI."""
+    id: int
+    job_id_code: Optional[str] = "N/A"
+    product_name: str
+    quantity_to_produce: int
+    priority: int
+    status: ScheduledTaskStatus
+
+    model_config = ConfigDict(from_attributes=True)
+
+class MachineQueueResponse(BaseModel):
+    """The complete data payload for the operator's task view for one machine."""
+    machine_name: str
+    current_job: Optional[OperatorJobOut] = None
+    next_job: Optional[OperatorJobOut] = None
+
+class ReportIssueRequest(BaseModel):
+    """The request body when an operator reports an issue."""
+    reason: str
+    comments: Optional[str] = None
 
 # --- 2.3.2 Define ScheduleRequest Schema ---
 class ScheduleRequest(BaseModel):
@@ -80,10 +111,25 @@ class ScheduledTaskResponse(BaseModel):
             datetime: lambda dt: dt.isoformat()
         }
 
+class ScheduleTaskDetailOut(BaseModel):
+    """The definitive, client-facing response model for a scheduled task for managers."""
+    id: int
+    status: ScheduledTaskStatus
+    start_time: datetime
+    end_time: datetime
+    scheduled_duration_mins: int
+    job_id_code: Optional[str]
+    production_order_code: str
+    product_name: Optional[str]
+    priority: int
+    quantity_to_produce: int
+    process_step_name: str
+    step_number: int
+    assigned_machine_code: str
+
+    model_config = ConfigDict(from_attributes=True)
+
 class ScheduleOutputResponse(BaseModel):
-    """
-    Final API response for schedule execution.
-    """
     status: str     # e.g "OPTIMAL", "FEASIBLE", "INFEASIBLE", "ERROR"
     makespan_minutes: Optional[float] = None
     scheduled_tasks: List[ScheduledTaskResponse]
@@ -456,3 +502,8 @@ class JobLogStatusUpdate(BaseModel):
             ]
         }
     }
+
+# --- OPERATORS TASK SCHEMAS ---
+class OperatorTaskUpdate(BaseModel):
+    status: Literal["in_progress", "completed", "cancelled"]
+    issue_reason: Optional[str] = None

@@ -24,6 +24,7 @@ from backend.app.schemas import (ScheduleRequest,
                                  JobLogStatusUpdate)
 from backend.app.routes import router as crud_router
 from backend.app.utils import ensure_utc_aware
+from backend.app.routes import operator_router, task_action_router
 
 # Configure logging for the main API file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,6 +39,8 @@ app = FastAPI(
 )
 
 app.include_router(crud_router)
+app.include_router(operator_router)
+app.include_router(task_action_router)
 
 # Define the list of origins that are allowed to make requests.
 origins = [

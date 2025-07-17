@@ -3,12 +3,12 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   getDowntimeEvents,
   deleteDowntimeEvent,
-} from '../api/downtimeEventsApi';
-import { queryClient } from '../lib/react-query';
-import AddDowntimeEventsModal from '../components/AddDowntimeEventsModal';
-import ImportDowntimeEventsModal from '../components/ImportDowntimeEventsModal';
-import { getMachines, type MachineData } from '../api/machinesAPI';
-import type { DowntimeEventData } from '../api/downtimeEventsApi';
+} from '../../api/downtimeEventsApi';
+import { queryClient } from '../../lib/react-query';
+import AddDowntimeEventsModal from '../../components/AddDowntimeEventsModal';
+import ImportDowntimeEventsModal from '../../components/ImportDowntimeEventsModal';
+import { getMachines, type MachineData } from '../../api/machinesAPI';
+import type { DowntimeEventData } from '../../api/downtimeEventsApi';
 
 const DowntimeEvents: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);

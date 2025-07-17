@@ -1,8 +1,8 @@
 import React, {useState} from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext';
-import apiClient from '../api/axios.ts'; 
+import { useAuth } from '../../auth/AuthContext.tsx';
+import apiClient from '../../api/axios.ts'; 
 
 // Define the shape of login response
 interface LoginResponse {

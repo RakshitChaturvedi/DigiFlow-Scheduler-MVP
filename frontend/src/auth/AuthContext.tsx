@@ -1,58 +1,68 @@
-import React, { createContext, useState, useContext, useEffect } from 'react'
-import type { ReactNode } from 'react'
+import { createContext, useState, useContext, useEffect, type ReactNode } from 'react';
+import { jwtDecode } from 'jwt-decode'; // You'll need to install this: npm install jwt-decode
 
+// Define the shape of the context data, now including userRole
 interface AuthContextType {
   isAuthenticated: boolean;
-  login: (token: string) => void; // Function to log in, takes a string token
-  logout: () => void; // Function to log out, takes no arguments
+  userRole: string | null;
+  login: (token: string) => void;
+  logout: () => void;
 }
 
-// Create the context with a default value It's typed as AuthContextType | undefined because it will be undefined initially before the Provider's value is set. The `useAuth` hook handles the `undefined` check.
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Define the props for the AuthProvider component
 interface AuthProviderProps {
-  children: ReactNode; // `ReactNode` is the correct type for children in React
+  children: ReactNode;
 }
 
-// Create the provider component React.FC<AuthProviderProps> explicitly types this functional component
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  // State to hold the authentication token. It attempts to get the token from localStorage on initial render. Type is `string | null` because the token can either be a string or null (if not logged in).
+export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [token, setToken] = useState<string | null>(localStorage.getItem('accessToken'));
+  const [userRole, setUserRole] = useState<string | null>(null);
 
-  // useEffect hook to handle initial token check from local storage. This ensures the token state is correctly initialized if a token exists from a previous session.
+  // This effect runs when the component mounts or the token changes
   useEffect(() => {
     const storedToken = localStorage.getItem('accessToken');
     if (storedToken) {
-      setToken(storedToken);
+      try {
+        // Decode the token to extract the role payload
+        const decoded: { role: string } = jwtDecode(storedToken);
+        setToken(storedToken);
+        setUserRole(decoded.role);
+      } catch (error) {
+        console.error("Invalid token found in storage:", error);
+        logout(); // Clear out the invalid token
+      }
     }
-  }, []); // Empty dependency array means this effect runs only once after the initial render.
+  }, []);
 
-  // `login` function: updates the token state and stores it in localStorage.
   const login = (newToken: string) => {
-    setToken(newToken);
-    localStorage.setItem('accessToken', newToken);
+    try {
+      const decoded: { role: string } = jwtDecode(newToken);
+      setToken(newToken);
+      setUserRole(decoded.role); // Set the role on login
+      localStorage.setItem('accessToken', newToken);
+    } catch (error) {
+      console.error("Failed to decode token on login:", error);
+    }
   };
 
-  // `logout` function: clears the token state and removes it from localStorage.
   const logout = () => {
     setToken(null);
+    setUserRole(null); // Clear the role on logout
     localStorage.removeItem('accessToken');
+    // A full page reload to /login ensures all state is cleared
     window.location.href = '/login';
   };
 
-  // `isAuthenticated` derived state: true if a token exists, false otherwise. The `!!` (double negation) converts a truthy/falsy value (string/null) into a boolean.
   const isAuthenticated = !!token;
 
   return (
-    // The AuthContext.Provider makes the `value` available to all components wrapped by it.
-    <AuthContext.Provider value={{ isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, userRole, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-// Create a custom hook for easy access to the context
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {

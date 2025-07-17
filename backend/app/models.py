@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text, event
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text, event, Table
 from sqlalchemy.orm import declarative_base, relationship, Session, attributes, Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.exc import NoResultFound
@@ -10,12 +10,20 @@ from datetime import datetime
 
 import uuid
 
-from backend.app.enums import OrderStatus, JobLogStatus
+from backend.app.enums import OrderStatus, JobLogStatus, ScheduledTaskStatus
 
 
 import datetime
 
 Base = declarative_base()
+
+# --- User-Machine Association Table ---
+user_machine_association = Table(
+    'user_machine_association',
+    Base.metadata,
+    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True),
+    Column('machine_id', Integer, ForeignKey('machines.id', ondelete='CASCADE'), primary_key=True)
+)
 
 # --- MACHINE MODEL ---
 class Machine(Base):
@@ -37,6 +45,12 @@ class Machine(Base):
     scheduled_tasks = relationship("ScheduledTask", back_populates="assigned_machine")
     # A machine can have many downtime events
     downtime_events = relationship("DowntimeEvent", back_populates="machine", cascade="all, delete", passive_deletes=True)
+
+    authorized_operators = relationship(
+        "User",
+        secondary=user_machine_association,
+        back_populates="authorized_machines"
+    )
 
     def __repr__(self):
         return f"<Machine(id={self.id}, machine_id_code = '{self.machine_id_code}', type = '{self.machine_type}')>"
@@ -112,9 +126,11 @@ class ScheduledTask(Base):
 
     # Additional Fields to store derived info from scheduling or actual execution
     scheduled_duration_mins = Column(Integer, nullable=False)
-    status = Column(String, default="scheduled", nullable=False) #eg Scheduled, InProgress, Delayed etc
+    status: Mapped[ScheduledTaskStatus] = mapped_column(SqlEnum(ScheduledTaskStatus, name="scheduled_task_status_enum", native_enum=False), default=ScheduledTaskStatus.SCHEDULED, nullable=False)
     archived = mapped_column(Boolean, default=False)
+    job_id_code = Column(String, unique=True, nullable=True) 
     scheduled_time = Column(DateTime, nullable=True)
+    block_reason = Column(String, nullable=True)
 
     # RELATIONSHIPS
     # to parent objects
@@ -136,6 +152,7 @@ class DowntimeEvent(Base):
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     reason = Column(String, nullable=False)
+    comments = Column(Text, nullable=True)
 
     #Relationship to machine
     machine = relationship("Machine", back_populates="downtime_events")
@@ -182,6 +199,12 @@ class User(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
     last_login: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    authorized_machines = relationship(
+        "Machine",
+        secondary=user_machine_association,
+        back_populates="authorized_operators"
+    )
 
 # --- Consolidated SQLAlchemy Event Listener for All Validations (3.1.1 and 3.1.2) ---
 @event.listens_for(Session, "before_flush")

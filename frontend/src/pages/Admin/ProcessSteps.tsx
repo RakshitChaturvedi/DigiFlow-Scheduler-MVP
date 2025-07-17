@@ -4,10 +4,10 @@ import {
   getProcessSteps,
   deleteProcessStep,
   type ProcessStepData,
-} from '../api/processStepsApi';
-import { queryClient } from '../lib/react-query';
-import AddProcessStepModal from '../components/AddProcessStepModal';
-import ImportProcessStepsModal from '../components/ImportProcessStepsModal';
+} from '../../api/processStepsApi';
+import { queryClient } from '../../lib/react-query';
+import AddProcessStepModal from '../../components/AddProcessStepModal';
+import ImportProcessStepsModal from '../../components/ImportProcessStepsModal';
 
 const ProcessSteps: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);

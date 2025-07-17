@@ -6,11 +6,11 @@ import {
   getProductionOrders,
   deleteProductionOrder,
   type ProductionOrderData,
-} from '../api/productionOrdersApi';
-import { createSchedule } from '../api/createSchedule';
-import AddProductionOrderModal from '../components/AddProductionOrderModal';
-import ImportOrdersModal from '../components/ImportProductionOrderModal';
-import { queryClient } from '../lib/react-query';
+} from '../../api/productionOrdersApi';
+import { createSchedule } from '../../api/createSchedule';
+import AddProductionOrderModal from '../../components/AddProductionOrderModal';
+import ImportOrdersModal from '../../components/ImportProductionOrderModal';
+import { queryClient } from '../../lib/react-query';
 
 const ProductionOrders: React.FC = () => {
   const [searchTerm, setSearchTerm] = React.useState<string>('');
@@ -209,7 +209,9 @@ const ProductionOrders: React.FC = () => {
             setIsAddModalOpen(false);
             setIsEditing(false);
             setSelectedOrder(null);
-            queryClient.invalidateQueries({ queryKey: ['visibleOrders'] });
+            FROM: queryClient.invalidateQueries({ queryKey: ['visibleOrders'] });
+            TO: 
+            queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
           }}
           isEditing={isEditing}
           initialData={selectedOrder ?? undefined}

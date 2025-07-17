@@ -4,10 +4,10 @@ import {
   getMachines,
   deleteMachine,
   type MachineData,
-} from '../api/machinesAPI';
-import { queryClient } from '../lib/react-query';
-import AddMachineModal from '../components/AddMachineModal';
-import ImportMachinesModal from '../components/ImportMachinesModal';
+} from '../../api/machinesAPI';
+import { queryClient } from '../../lib/react-query';
+import AddMachineModal from '../../components/AddMachineModal';
+import ImportMachinesModal from '../../components/ImportMachinesModal';
 
 const Machines: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
