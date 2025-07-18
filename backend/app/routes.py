@@ -32,7 +32,7 @@ from backend.app.schemas import (
 from backend.app.crud import get_user_by_email, create_user, get_user_by_id, get_all_users, update_user_by_admin
 from backend.app.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token, ensure_utc_aware, parse_ist_to_utc
 from backend.app.models import User, ScheduledTask, JobLog
-from backend.app.enums import OrderStatus, ScheduledTaskStatus
+from backend.app.enums import OrderStatus, ScheduledTaskStatus, JobLogStatus
 from backend.app.dependencies import get_current_active_user, require_admin, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -1002,15 +1002,23 @@ def start_scheduled_task(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
-    """Endpoint for the operator to press the 'START JOB' button."""
+    """Endpoint for the operator to press the 'START' or 'RESUME' button."""
     task = crud.get_task_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    if task.status != ScheduledTaskStatus.SCHEDULED:
+    if task.status not in [ScheduledTaskStatus.SCHEDULED, ScheduledTaskStatus.PAUSED, ScheduledTaskStatus.BLOCKED]:
         raise HTTPException(status_code=409, detail=f"Cannot start task with status '{task.status.value}'")
 
+    # Update the ScheduledTask status
     task.status = ScheduledTaskStatus.IN_PROGRESS
+    
+    # NEW: Find or create the corresponding JobLog and update its status
+    job_log = crud.find_or_create_job_log_for_task(db, task)
+    job_log.status = JobLogStatus.IN_PROGRESS
+    if job_log.actual_start_time is None: # Set start time only if it's the first time
+        job_log.actual_start_time = datetime.now(timezone.utc)
+
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1029,7 +1037,59 @@ def finish_scheduled_task(
     if task.status != ScheduledTaskStatus.IN_PROGRESS:
         raise HTTPException(status_code=409, detail=f"Cannot finish task with status '{task.status.value}'")
 
+    # Update the ScheduledTask status
     task.status = ScheduledTaskStatus.COMPLETED
+    
+    # NEW: Find the JobLog and mark it as complete with an end time
+    job_log = crud.find_or_create_job_log_for_task(db, task)
+    job_log.status = JobLogStatus.COMPLETED
+    job_log.actual_end_time = datetime.now(timezone.utc)
+
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@task_action_router.post("/{task_id}/pause", status_code=status.HTTP_204_NO_CONTENT)
+def pause_scheduled_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Endpoint for the operator to press the 'PAUSE JOB' button."""
+    task = crud.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != ScheduledTaskStatus.IN_PROGRESS:
+        raise HTTPException(status_code=409, detail=f"Cannot pause task with status '{task.status.value}'")
+
+    task.status = ScheduledTaskStatus.PAUSED
+    
+    job_log = crud.find_or_create_job_log_for_task(db, task)
+    job_log.status = JobLogStatus.PAUSED
+
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@task_action_router.post("/{task_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_scheduled_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Endpoint for the operator to press the 'CANCEL JOB' button."""
+    task = crud.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.status = ScheduledTaskStatus.CANCELLED
+    
+    job_log = crud.find_or_create_job_log_for_task(db, task)
+    job_log.status = JobLogStatus.CANCELLED
+    if not job_log.actual_end_time: # Mark end time if not already set
+        job_log.actual_end_time = datetime.now(timezone.utc)
+
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1041,19 +1101,23 @@ def report_task_issue(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
-    """Endpoint for the operator to press the 'REPORT ISSUE' button."""
+    # ... (This endpoint remains largely the same, but now uses find_or_create_job_log_for_task)
     task = crud.get_task_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
     task.status = ScheduledTaskStatus.BLOCKED
     task.block_reason = issue_data.reason
+    
+    job_log = crud.find_or_create_job_log_for_task(db, task)
+    job_log.status = JobLogStatus.PAUSED # Or a new 'BLOCKED' status if you add it to the enum
+    job_log.remarks = f"ISSUE: {issue_data.reason}. {issue_data.comments or ''}"
 
     # Create a corresponding DowntimeEvent
     downtime_event = models.DowntimeEvent(
         machine_id=task.assigned_machine_id,
         start_time=datetime.now(timezone.utc),
-        end_time=datetime.now(timezone.utc), # End time can be updated later when the issue is resolved
+        end_time=datetime.now(timezone.utc),
         reason=f"OPERATOR REPORT: {issue_data.reason}",
         comments=issue_data.comments
     )

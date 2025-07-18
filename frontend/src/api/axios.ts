@@ -15,7 +15,9 @@ apiClient.interceptors.request.use(
 
         return config;
     },
-    (error) => Promise.reject(error)
+    (error) => {
+        Promise.reject(error);
+    }
 );
 
 apiClient.interceptors.response.use(
@@ -32,12 +34,11 @@ apiClient.interceptors.response.use(
             originalRequest._retry = true;
 
             try {
-                const res = await axios.post('http://127.0.0.1:8000/api/auth/refresh', {}, {
-                    withCredentials: true
-                });
+                const res = await apiClient.post('/api/auth/refresh', {});
 
                 const newToken = res.data.access_token;
                 localStorage.setItem('accessToken', newToken);
+                
                 apiClient.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
                 originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
 
@@ -54,7 +55,7 @@ apiClient.interceptors.response.use(
 );
 
 export const getProductionOrders = async (params = {}) => {
-  const response = await axios.get('/orders/', { params });
+  const response = await apiClient.get('/api/orders/', { params });
   return response.data;
 };
 

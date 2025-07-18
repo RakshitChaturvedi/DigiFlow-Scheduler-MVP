@@ -509,22 +509,25 @@ def check_and_update_production_order_completion(db: Session, production_order_i
 # --- OPERATOR-SPECIFIC ---
 def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[models.ScheduledTask], Optional[models.ScheduledTask]]:
     """
-    Finds the current (IN_PROGRESS) and next (SCHEDULED) job for a given machine.
-    Eagerly loads related data to prevent N+1 queries.
+    Finds the current (IN_PROGRESS, PAUSED, BLOCKED) and next (SCHEDULED) job for a given machine.
     """
     machine = get_machine_by_code(db, machine_id_code)
     if not machine:
         return None, None
 
-    # Find the job that is currently running on this machine
+    # A "current" job is one that has started but not finished
     current_job = db.query(models.ScheduledTask).options(
         joinedload(models.ScheduledTask.production_order)
     ).filter(
         models.ScheduledTask.assigned_machine_id == machine.id,
-        models.ScheduledTask.status == ScheduledTaskStatus.IN_PROGRESS
+        models.ScheduledTask.status.in_([
+            ScheduledTaskStatus.IN_PROGRESS,
+            ScheduledTaskStatus.PAUSED,
+            ScheduledTaskStatus.BLOCKED
+        ])
     ).order_by(models.ScheduledTask.start_time).first()
 
-    # Find the next scheduled job for this machine
+    # The "next" job is the earliest one that is still scheduled
     next_job = db.query(models.ScheduledTask).options(
         joinedload(models.ScheduledTask.production_order)
     ).filter(
@@ -537,3 +540,26 @@ def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[model
 def get_task_by_id(db: Session, task_id: int) -> Optional[models.ScheduledTask]:
     """Gets a single scheduled task by its primary key ID."""
     return db.query(models.ScheduledTask).filter(models.ScheduledTask.id == task_id).first()
+
+def find_or_create_job_log_for_task(db: Session, task: models.ScheduledTask) -> models.JobLog:
+    """
+    Finds an existing JobLog for a task or creates a new one.
+    This is crucial for ensuring we don't create duplicate logs.
+    """
+    job_log = db.query(models.JobLog).filter(
+        models.JobLog.production_order_id == task.production_order_id,
+        models.JobLog.process_step_id == task.process_step_id,
+        models.JobLog.machine_id == task.assigned_machine_id
+    ).first()
+
+    if not job_log:
+        job_log = models.JobLog(
+            production_order_id=task.production_order_id,
+            process_step_id=task.process_step_id,
+            machine_id=task.assigned_machine_id,
+            actual_start_time=datetime.now(timezone.utc), # Set start time on creation
+            status=JobLogStatus.IN_PROGRESS
+        )
+        db.add(job_log)
+    
+    return job_log
