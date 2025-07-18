@@ -32,6 +32,14 @@ export const startTask = async (taskId: number): Promise<void> => {
   await apiClient.post(`/api/scheduled-tasks/${taskId}/start`);
 };
 
+export const pauseTask = async (taskId: number): Promise<void> => {
+  await apiClient.post(`/api/scheduled-tasks/${taskId}/pause`);
+};
+
+export const cancelTask = async (taskId: number): Promise<void> => {
+  await apiClient.post(`/api/scheduled-tasks/${taskId}/cancel`);
+};
+
 export const finishTask = async (taskId: number): Promise<void> => {
   await apiClient.post(`/api/scheduled-tasks/${taskId}/finish`);
 };

@@ -6,7 +6,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects.postgresql import UUID
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 import uuid
 
@@ -277,12 +277,12 @@ def validate_before_flush(session, flush_context, instances):
                 raise ValueError("DowntimeEvent.reason cannot be empty.")
 
         elif isinstance(obj, JobLog):
-            if obj.actual_start_time and obj.actual_end_time and obj.actual_end_time <= obj.actual_start_time:
-                raise ValueError(f"JobLog actual_end_time ({obj.actual_end_time}) must be after actual_start_time ({obj.actual_start_time}).")
-            # The .status check here will be removed/refined in 3.1.3 once Enums are fully leveraged.
-            # For now, if you're getting an Enum, this might not be needed or would raise if it's an invalid string.
-            # If obj.status is an Enum member, obj.status.value might be needed for string comparison.
-            # This validation will be handled more robustly by the Enum itself and Pydantic.
+            if obj.actual_start_time and obj.actual_end_time:
+                start_utc = obj.actual_start_time if obj.actual_start_time.tzinfo else obj.actual_start_time.replace(tzinfo=timezone.utc)
+                end_utc = obj.actual_end_time if obj.actual_end_time.tzinfo else obj.actual_end_time.replace(tzinfo=timezone.utc)
+
+                if end_utc.astimezone(timezone.utc) <= start_utc.astimezone(timezone.utc):
+                    raise ValueError(f"JobLog actual_end_time ({obj.actual_end_time}) must be after actual_start_time ({obj.actual_start_time}).")
 
         # --- Foreign Key Existence Validation ---
         

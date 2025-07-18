@@ -509,15 +509,17 @@ def check_and_update_production_order_completion(db: Session, production_order_i
 # --- OPERATOR-SPECIFIC ---
 def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[models.ScheduledTask], Optional[models.ScheduledTask]]:
     """
-    Finds the current (IN_PROGRESS, PAUSED, BLOCKED) and next (SCHEDULED) job for a given machine.
+    Finds the current (IN_PROGRESS, etc.) and next VALID (SCHEDULED with completed prerequisites)
+    job for a given machine. Eagerly loads related data.
     """
     machine = get_machine_by_code(db, machine_id_code)
     if not machine:
         return None, None
 
-    # A "current" job is one that has started but not finished
+    # A "current" job is one that has started but not finished. This logic is fine.
     current_job = db.query(models.ScheduledTask).options(
-        joinedload(models.ScheduledTask.production_order)
+        joinedload(models.ScheduledTask.production_order),
+        joinedload(models.ScheduledTask.process_step_definition)
     ).filter(
         models.ScheduledTask.assigned_machine_id == machine.id,
         models.ScheduledTask.status.in_([
@@ -527,15 +529,44 @@ def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[model
         ])
     ).order_by(models.ScheduledTask.start_time).first()
 
-    # The "next" job is the earliest one that is still scheduled
-    next_job = db.query(models.ScheduledTask).options(
-        joinedload(models.ScheduledTask.production_order)
+    # --- NEW, SMARTER LOGIC FOR FINDING THE NEXT JOB ---
+    # 1. Get all potential candidates for this machine that are scheduled.
+    scheduled_candidates = db.query(models.ScheduledTask).options(
+        joinedload(models.ScheduledTask.production_order),
+        joinedload(models.ScheduledTask.process_step_definition)
     ).filter(
         models.ScheduledTask.assigned_machine_id == machine.id,
         models.ScheduledTask.status == ScheduledTaskStatus.SCHEDULED
-    ).order_by(models.ScheduledTask.start_time).first()
+    ).order_by(models.ScheduledTask.start_time).all()
 
+    next_job = None
+    # 2. Loop through the candidates and find the first one that is actually ready to start.
+    for candidate_task in scheduled_candidates:
+        step_number = candidate_task.process_step_definition.step_number
+        
+        # If it's the first step, it's always ready.
+        if step_number == 1:
+            next_job = candidate_task
+            break # We found our valid next job, so we can stop looking.
+
+        # If it's not the first step, we must check the status of the previous step.
+        previous_step_number = step_number - 1
+        
+        # Find the scheduled task for the previous step of the SAME production order.
+        previous_task = db.query(models.ScheduledTask).join(
+            models.ProcessStep, models.ScheduledTask.process_step_id == models.ProcessStep.id
+        ).filter(
+            models.ScheduledTask.production_order_id == candidate_task.production_order_id,
+            models.ProcessStep.step_number == previous_step_number
+        ).first()
+
+        # 3. Check if the previous task is marked as COMPLETED.
+        if previous_task and previous_task.status == ScheduledTaskStatus.COMPLETED:
+            next_job = candidate_task
+            break # We found our valid next job.
+            
     return current_job, next_job
+
 
 def get_task_by_id(db: Session, task_id: int) -> Optional[models.ScheduledTask]:
     """Gets a single scheduled task by its primary key ID."""

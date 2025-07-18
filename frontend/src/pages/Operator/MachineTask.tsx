@@ -7,6 +7,8 @@ import {
   startTask,
   finishTask,
   reportIssue,
+  pauseTask,
+  cancelTask,
   type MachineQueue,
 } from '../../api/operatorApi';
 
@@ -57,7 +59,7 @@ const MachineTaskPage: React.FC = () => {
   const { data: queue, isLoading, isError } = useQuery<MachineQueue, Error>({
     queryKey: ['machineQueue', machineIdCode],
     queryFn: () => getMachineQueue(machineIdCode!),
-    refetchInterval: 15000, // Auto-refresh every 15 seconds
+    refetchInterval: 15000,
     enabled: !!machineIdCode,
   });
 
@@ -65,10 +67,12 @@ const MachineTaskPage: React.FC = () => {
     queryClient.invalidateQueries({ queryKey: ['machineQueue', machineIdCode] });
   };
 
-  // Mutations for job actions
-  const startMutation = useMutation({ mutationFn: startTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to start task.") });
+  // Mutations for ALL job actions
+  const startMutation = useMutation({ mutationFn: startTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to start/resume task.") });
   const finishMutation = useMutation({ mutationFn: finishTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to finish task.") });
   const issueMutation = useMutation({ mutationFn: (payload: { taskId: number; reason: string }) => reportIssue(payload.taskId, { reason: payload.reason }), onSuccess: invalidateQueue, onError: () => toast.error("Failed to report issue.") });
+  const pauseMutation = useMutation({ mutationFn: pauseTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to pause task.") });
+  const cancelMutation = useMutation({ mutationFn: cancelTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to cancel task.") });
 
   // Effect to update the clock
   useEffect(() => {
@@ -84,20 +88,34 @@ const MachineTaskPage: React.FC = () => {
   };
 
   if (isLoading) return <div className="bg-gray-900 text-white text-4xl flex items-center justify-center h-screen animate-pulse">Loading Machine Queue...</div>;
-  if (isError) return <div className="bg-gray-900 text-red-500 text-4xl flex items-center justify-center h-screen">Error: Could not load data for machine '{machineIdCode}'.</div>;
-  
-  // --- FIX: Add this check to ensure queue is not undefined ---
+  if (isError) return <div className="bg-gray-900 text-red-500 text-4xl flex items-center justify-center h-screen">Error: Could not load data.</div>;
   if (!queue) return <div className="bg-gray-900 text-white text-4xl flex items-center justify-center h-screen">No data available.</div>;
 
-  const jobToDisplay = queue.current_job || queue.next_job;
-  const isJobInProgress = queue.current_job?.status.toLowerCase() === 'in_progress';
-  const isJobBlocked = queue.current_job?.status.toLowerCase() === 'blocked';
+  const { current_job, next_job } = queue;
+  const status = current_job?.status.toLowerCase();
 
+  const jobToDisplay = current_job || next_job;
+  let displayStatus = "NO JOBS READY";
+  let statusColor = "text-gray-500";
+
+  if (status === 'in_progress') {
+    displayStatus = "IN PROGRESS";
+    statusColor = 'text-green-400 animate-pulse';
+  } else if (status === 'blocked') {
+    displayStatus = "BLOCKED";
+    statusColor = 'text-red-500';
+  } else if (status === 'paused') {
+    displayStatus = "PAUSED";
+    statusColor = 'text-yellow-400';
+  } else if (next_job) {
+    displayStatus = "UP NEXT";
+    statusColor = 'text-blue-400';
+  }
+  
   return (
     <div className="bg-gray-900 text-white h-screen flex flex-col p-4 md:p-8 font-sans">
       <ReportIssueModal isOpen={isIssueModalOpen} onClose={() => setIssueModalOpen(false)} onSubmit={handleReportIssue} />
 
-      {/* Header */}
       <header className="flex justify-between items-center border-b-2 border-gray-700 pb-4">
         <button onClick={() => navigate('/operator/select-machine')} className="text-blue-400 hover:text-blue-300 text-lg">
           &larr; Back to Machines
@@ -108,52 +126,51 @@ const MachineTaskPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-center text-center">
-        {!jobToDisplay ? (
-          <div className="text-5xl text-gray-500">NO JOBS IN QUEUE</div>
-        ) : (
+        {jobToDisplay ? (
           <>
-            <div className={`text-4xl font-semibold mb-4 ${isJobInProgress ? 'text-green-400 animate-pulse' : isJobBlocked ? 'text-red-500' : 'text-blue-400'}`}>
-              {isJobInProgress ? 'IN PROGRESS' : isJobBlocked ? 'BLOCKED' : 'UP NEXT'}
-            </div>
+            <div className={`text-4xl font-semibold mb-4 ${statusColor}`}>{displayStatus}</div>
             <div className="text-8xl md:text-9xl font-bold mb-2">{jobToDisplay.job_id_code}</div>
             <div className="text-5xl md:text-6xl text-gray-300 mb-2">{jobToDisplay.product_name}</div>
             <div className="text-3xl text-gray-400">Qty: {jobToDisplay.quantity_to_produce} | Priority: {jobToDisplay.priority}</div>
           </>
+        ) : (
+          <div className="text-5xl text-gray-500">NO JOBS READY FOR THIS MACHINE</div>
         )}
       </main>
+      
+      <footer className="w-full">
+        {(() => {
+          if (!current_job && !next_job) return null; // No jobs, no buttons
 
-      {/* Action Footer */}
-      <footer className="w-full grid grid-cols-2 gap-4">
-        {isJobInProgress || isJobBlocked ? (
-          <>
-            <button
-              onClick={() => setIssueModalOpen(true)}
-              disabled={issueMutation.isPending}
-              className="w-full text-4xl font-bold p-6 rounded-lg bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-900 transition-colors"
-            >
-              REPORT ISSUE
-            </button>
-            <button
-              onClick={() => finishMutation.mutate(queue.current_job!.id)}
-              disabled={finishMutation.isPending || isJobBlocked} // Also disable if blocked
-              className="w-full text-4xl font-bold p-6 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-red-900 transition-colors"
-            >
-              {finishMutation.isPending ? '...' : 'FINISH JOB'}
-            </button>
-          </>
-        ) : (
-          jobToDisplay && (
-            <button
-              onClick={() => startMutation.mutate(jobToDisplay.id)}
-              disabled={startMutation.isPending}
-              className="col-span-2 w-full text-6xl font-bold p-8 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900 transition-colors"
-            >
-              {startMutation.isPending ? '...' : 'START JOB'}
-            </button>
-          )
-        )}
+          if (status === 'in_progress') {
+            return (
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => pauseMutation.mutate(current_job!.id)} disabled={pauseMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-900">PAUSE</button>
+                <button onClick={() => finishMutation.mutate(current_job!.id)} disabled={finishMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-red-900">FINISH</button>
+              </div>
+            );
+          }
+          
+          if (status === 'paused' || status === 'blocked') {
+            return (
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => { if (window.confirm('Are you sure you want to cancel this job?')) { cancelMutation.mutate(current_job!.id); } }} disabled={cancelMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-gray-600 hover:bg-gray-700 disabled:bg-gray-900">CANCEL</button>
+                <button onClick={() => startMutation.mutate(current_job!.id)} disabled={startMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900">RESUME</button>
+              </div>
+            );
+          }
+
+          if (next_job) {
+            return (
+              <button onClick={() => startMutation.mutate(next_job.id)} disabled={startMutation.isPending} className="col-span-2 w-full text-6xl font-bold p-8 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900">
+                {startMutation.isPending ? '...' : 'START JOB'}
+              </button>
+            );
+          }
+          
+          return null;
+        })()}
       </footer>
     </div>
   );
