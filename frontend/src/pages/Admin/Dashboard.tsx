@@ -1,59 +1,142 @@
-import React from "react";
+import React, { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { getDashboardData, type DashboardData } from "../../api/dashboardApi";
+import { Link } from "react-router-dom";
+
+interface KpiCardProps {
+  title: string;
+  value: string | number;
+  colorClass: string;
+}
+
+const KpiCard: React.FC<KpiCardProps> = ({ title, value, colorClass }) => (
+  <div className="bg-white p-6 rounded-lg shadow-sm">
+    <h3 className="text-lg font-medium text-gray-600">{title}</h3>
+    <p className={`text-4xl font-bold mt-2 ${colorClass}`}>{value}</p>
+  </div>
+);
 
 const Dashboard: React.FC = () => {
+  const { data, isLoading, isError, error } = useQuery<DashboardData, Error>({
+    queryKey: ['dashboardData'],
+    queryFn: getDashboardData,
+    staleTime: 60*1000, // Refetch data every minute
+    refetchInterval: 60*1000,
+  });
+
+  // --- KPI Calculations ---
+  // useMemo to ensure complex calculations only run when data changes
+  const kpiMetrics = useMemo(() => {
+    if (!data) {
+      return {
+        utilization: 0,
+        completedOrders: 0,
+        activeAlerts: 0,
+        jobsInProgress: 0,
+        unscheduledOrders: [],
+      };
+    }
+    
+    const {productionOrders, scheduledTasks, downtimeEvents, machines} = data;
+
+    // 1: Machine utilization
+    const activeMachines = machines.filter(m => m.is_active);
+    const machinesInProgress = new Set(
+      scheduledTasks.filter(t => t.status.toLowerCase() === 'in_progress').map(t => t.assigned_machine.machine_id_code)
+    ).size;
+    const utilization = activeMachines.length > 0 ? Math.round((machinesInProgress / activeMachines.length) * 100) : 0;
+
+    // 2: Completed Orders (Today)
+    const todayString = new Date().toLocaleDateString('en-CA');
+
+    const completedOrders = productionOrders.filter(o => {
+        if (o.current_status.toLowerCase() !== 'completed' || !o.updated_at) {
+            return false;
+        }
+        // Convert the order's UTC update time to a 'YYYY-MM-DD' string in the local timezone.
+        const completedDateString = new Date(o.updated_at).toLocaleDateString('en-CA');
+        // Now, compare the strings. This works correctly across timezones.
+        return completedDateString === todayString;
+    }).length;
+
+    // 3: Active Downtime Alerts
+    const activeAlerts = downtimeEvents.length;
+    
+    // 4: Jobs in Progress
+    const jobsInProgress = scheduledTasks.filter(t => t.status.toLowerCase() === 'in_progress').length;
+
+    // 5: Unscheduled Orders List
+    const unscheduledOrders = productionOrders.filter(o => o.current_status.toLowerCase() === 'pending');
+
+    return {utilization, completedOrders, activeAlerts, jobsInProgress, unscheduledOrders};
+  }, [data]);
+
+  if (isLoading) {
+    return <div className="text-center p-8">Loading Dashboard Data...</div>;
+  }
+
+  if (isError) {
+    return <div className="text-center p-8 text-red-600">Error loading dashboard: {error.message}</div>;
+  }
+
   return (
     <div className="bg-backgroundLight overflow-auto">
       <h2 className="text-2xl font-bold text-textDark mb-6">Dashboard Overview</h2>
+
+      {/* KPI Widgets */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {/* KPI Widgets */}
-
-        <div className="bg-white p-6 rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-600">Machine Utilization %</h3>
-          <p className="text-4xl font-bold text-primaryBlue mt-2">75%</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-600">Jobs On-Time %</h3>
-          <p className="text-4xl font-bold text-primaryGreen mt-2">92%</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-600">Active Downtime Alerts</h3>
-          <p className="text-4xl font-bold text-redAlert mt-2">3</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-600">OEE %</h3>
-          <p className="text-4xl font-bold text-orangeProgress mt-2">85%</p>
-        </div>
+        <KpiCard title="Machine Utilization" value={`${kpiMetrics.utilization}%`} colorClass="text-primaryBlue" />
+        <KpiCard title="Jobs In Progress" value={kpiMetrics.jobsInProgress} colorClass="text-orangeProgress" />
+        <KpiCard title="Completed Today" value={kpiMetrics.completedOrders} colorClass="text-primaryGreen" />
+        <KpiCard title="Active Downtime Alerts" value={kpiMetrics.activeAlerts} colorClass="text-redAlert" />
       </div>
 
-      {/* Schedule Gantt Chart Placeholder */}
+      {/* Schedule Gnatt Chart Placeholder */}
       <div className="bg-white p-6 rounded-lg shadow-sm mb-6">
-        <h3 className="text-xl font-semibold text-textDark mb-4">Schedule Gantt Chart</h3>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-semibold text-textDark">Live Schedule</h3>
+          <Link to="/schedule" className="text-sm font-medium text-primaryBlue hover:underline">
+            View Full Schedule &rarr;
+          </Link>
+        </div>
         <div className="h-96 bg-gray-100 flex items-center justify-center text-gray-500 rounded-md border border-dashed border-borderColor">
-          [Interavtive Gnatt Chart will go here]
+          [A charting library like 'dhtmlx-gantt-react' would be integrated here, fed with 'data.scheduledTasks']
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Unscheduled orders placeholder */}
+        {/* Unscheduled Orders List */}
         <div className="bg-white p-6 rounded-lg shadow-sm">
           <h3 className="text-xl font-semibold text-textDark mb-4">Unscheduled Orders</h3>
-          <ul className="list-disc pl-5 text-gray-700">
-            <li>Order #ORD-001 - Due: 2025-07-10</li>
-            <li>Order #ORD-005 - Due: 2025-07-12</li>
-            <li>Order #ORD-0010 - Due: 2025-07-15</li>
-          </ul>
+          {kpiMetrics.unscheduledOrders.length > 0 ? (
+            <ul className="space-y-2">
+              {kpiMetrics.unscheduledOrders.slice(0,5).map(order => (
+                <li key={order.id} className="text-gray-700 flex justify-between">
+                  <span>{order.order_id_code} - {order.product_name}</span>
+                  <span className="font-medium text-gray-500">Due: {new Date(order.due_date!).toLocaleDateString()}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-gray-500">No pending orders.</p>
+          )}
         </div>
 
-        {/* Active Alerts Placeholder */}
+        {/* Active Alerts List */}
         <div className="bg-white p-6 rounded-lg shadow-sm">
-          <h3 className="text-xl font-semibold text-textDark mb-4">Active Alerts</h3>
-          <ul className="list-disc pl-5 text-redAlert">
-            <li>Machine Lathe-01: Spindle issue (Since 10:00AM) </li>
-            <li>Machine Mill-03: Power outage (Since 11:30 AM)</li>
-          </ul>
+          <h3 className="text-xl font-semibold text-textDark mb-4">Recent Downtime Events</h3>
+          {data && data.downtimeEvents.length > 0 ? (
+            <ul className="space-y-2">
+              {data.downtimeEvents.slice(0,5).map(event => (
+                <li key={event.id} className="text-redAlert flex justify-between">
+                  <span>{event.machine?.machine_id_code || `Machine ID: ${event.machine_id}`}</span>
+                  <span className="font-medium">{event.reason}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-gray-500">No active downtime events.</p>
+          )}
         </div>
       </div>
     </div>
