@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getDashboardData, type DashboardData } from "../../api/dashboardApi";
 import { Link } from "react-router-dom";
+import GanttChart from "../../components/ganttChart";
 
 interface KpiCardProps {
   title: string;
@@ -99,9 +100,7 @@ const Dashboard: React.FC = () => {
             View Full Schedule &rarr;
           </Link>
         </div>
-        <div className="h-96 bg-gray-100 flex items-center justify-center text-gray-500 rounded-md border border-dashed border-borderColor">
-          [A charting library like 'dhtmlx-gantt-react' would be integrated here, fed with 'data.scheduledTasks']
-        </div>
+        <GanttChart />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

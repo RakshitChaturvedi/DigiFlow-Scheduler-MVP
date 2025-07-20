@@ -34,6 +34,7 @@ from backend.app.utils import hash_password, verify_password, create_access_toke
 from backend.app.models import User, ScheduledTask, JobLog
 from backend.app.enums import OrderStatus, ScheduledTaskStatus, JobLogStatus
 from backend.app.dependencies import get_current_active_user, require_admin, get_current_user
+from backend.app.gantt_chart import create_gantt_chart
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -1140,3 +1141,22 @@ def get_analytics_summary(
         downtime_by_reason=downtime_summary,
         order_status_summary= order_summary
     )
+
+# --- Gantt Chart Router ---
+@router.get("/schedule/gantt")
+def get_gantt_chart_data(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    # Generates and returns plotly gantt chart fig as a json obj
+    tasks = crud.get_scheduled_tasks(db)
+
+    if not tasks:
+        raise HTTPException(status_code=404, detail="No scheduled tasks found to generate a chart.")
+        
+    figure_json = create_gantt_chart(tasks)
+    
+    if not figure_json:
+         raise HTTPException(status_code=404, detail="Could not generate chart from available tasks.")
+
+    return JSONResponse(content=figure_json)
