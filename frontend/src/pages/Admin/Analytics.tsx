@@ -1,67 +1,81 @@
-import React from 'react';
+import React from "react";
+import { useQuery } from "@tanstack/react-query";
+import { PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from 'recharts';
+import { getAnalyticsData, type AnalyticsData } from "../../api/analyticsApi";
 
-interface AnalyticsProps {
+// Reusable card component to hold our charts
+const ChartCard = ({ title, children }: {title: string, children: React.ReactNode}) => (
+    <div className="bg-white p-6 rounded-lg shadow-sm">
+        <h3 className="text-xl font-semibold text-textDark mb-4">{title}</h3>
+        <div style={{width: '100%', height: 300}}>
+            {children}
+        </div>
+    </div>
+);
 
-}
+const AnalyticsPage: React.FC = () => {
+    const { data, isLoading, isError, error } = useQuery<AnalyticsData, Error>({
+        queryKey: ['analyticsData'],
+        queryFn: getAnalyticsData,
+    });
 
-const Analytics: React.FC<AnalyticsProps> = () => {
+    if (isLoading) return <div className="text-center p-8">Loading analytics...</div>;
+    if (isError) return <div className="text-center p-8 text-red-600">Error loading analytics: {error.message}</div>
+
+    const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF'];
+
     return (
-        <div className='bg-backgroundLight overflow-auto'>
-            <h2 className='text-2xl font-bold text-textDark mb-6'>Analytics</h2>
+        <div className="bg-backgroundLight overflow-auto">
+            <h2 className="text-2xl font-bold text-textDark mb-6">Analytics</h2>
 
-            {/* Date Range Picker Selection */}
-            <div className='bg-white p-6 rounded-lg shadow-sm mb-6 flex flex-col md:flex-row md:items-center md:justify-between'>
-                <h3 className='text-xl font-semibold text-textDark mb-4 md:mb-0'>View Stats For:</h3>
-                <div className='flex flex-wrap gap-3'>
-                    <button className='px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors duration-200 text-sm font-medium'>
-                        Last 7 Days
-                    </button>
-                    <button className='px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors duration-200 text-sm font-medium'>
-                        Last 30 Days
-                    </button>
-                    <button className='px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors duration-200 text-sm font-medium'>
-                        Custom Range
-                    </button>
-                    <input type='date' className='px-4 py-2 border-borderColor rounded-lg text-gray-700 focus:ring-primaryBlue focus:border-primaryBlue transition-all duration-200 text-sm' />                                                    
-                </div>
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <ChartCard title="Downtime by Reason">
+                    <ResponsiveContainer>
+                        <PieChart>
+                            <Pie
+                                data={data?.downtime_by_reason}
+                                cx="50%"
+                                cy="50%"
+                                labelLine={false}
+                                outerRadius={80}
+                                fill="#8884d8"
+                                dataKey="count"
+                                nameKey="reason"
+                                label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}
+                            >
+                                {data?.downtime_by_reason.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                ))}
+                            </Pie>
+                            <Tooltip />
+                            <Legend />        
+                        </PieChart>
+                    </ResponsiveContainer>
+                </ChartCard>
 
-            {/* Chart Widgets Grid (2x2 Grid) */}
-            <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
-                {/* Chart 1: OEE / utilization Over Time (Line Chart) */}
+                <ChartCard title="Order Status Summary">
+                <ResponsiveContainer>
+                    <BarChart data={data?.order_status_summary} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="status" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="count" fill="#8884d8" name="Number of Orders" />
+                    </BarChart>
+                </ResponsiveContainer>
+                </ChartCard>
+                
+                {/* Placeholder for future charts */}
                 <div className="bg-white p-6 rounded-lg shadow-sm min-h-[300px] flex items-center justify-center text-gray-500 border border-dashed border-borderColor">
-                    <h3 className='text-xl font-semibold text-textDark mb-4 absolute top-6 left-6'>OEE / Utilization Over Time</h3>
-                    <div className='text-center'>
-                        [Line Chart Placeholder] {/* Integrate a charting library like recharts or chart.js */}
-                    </div>
+                    [Future Chart Placeholder]
                 </div>
-
-                {/* Chart 2: On-Time vs. Late Orders (Bar Chart or Pie Chart) */}
                 <div className="bg-white p-6 rounded-lg shadow-sm min-h-[300px] flex items-center justify-center text-gray-500 border border-dashed border-borderColor">
-                    <h3 className="text-xl font-semibold text-textDark mb-4 absolute top-6 left-6">On-Time vs. Late Orders</h3>
-                    <div className="text-center">
-                        [Bar/Pie Chart Placeholder]
-                    </div>
+                    [Future Chart Placeholder]
                 </div>
-
-                {/* Chart 3: Downtime by Reason (Pie Chart) */}
-                <div className="bg-white p-6 rounded-lg shadow-sm min-h-[300px] flex items-center justify-center text-gray-500 border border-dashed border-borderColor">
-                    <h3 className="text-xl font-semibold text-textDark mb-4 absolute top-6 left-6">Downtime by Reason</h3>
-                    <div className="text-center">
-                        [Pie Chart Placeholder]
-                    </div>
-                </div>
-
-                {/* Chart 4: Job Turnaround Time by Process (Bar Chart) */}
-                <div className="bg-white p-6 rounded-lg shadow-sm min-h-[300px] flex items-center justify-center text-gray-500 border border-dashed border-borderColor">
-                    <h3 className="text-xl font-semibold text-textDark mb-4 absolute top-6 left-6">Job Turnaround Time by Process</h3>
-                    <div className="text-center">
-                        [Bar Chart Placeholder]
-                    </div>
-                </div>                
             </div>
         </div>
     );
 };
 
-export default Analytics
+export default AnalyticsPage;

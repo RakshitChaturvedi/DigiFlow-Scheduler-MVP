@@ -1,6 +1,6 @@
 import enum
 import logging
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, tuple_, func
 from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException, status
 from typing import List, Type, TypeVar, Union, Optional, cast
@@ -25,7 +25,7 @@ from backend.app.schemas import (
     DowntimeEventCreate, DowntimeEventUpdate, DowntimeEventOut, DowntimeEventImport,
     JobLogCreate, JobLogUpdate, JobLogOut,
     UserCreate, UserUpdate, UserUpdateMe, UserOut,
-    ScheduledTaskInternal
+    ScheduledTaskInternal, DowntimeByReason, OrderStatusSummary,
     )
 from backend.app.enums import OrderStatus, JobLogStatus, ScheduledTaskStatus
 from backend.app.config import PRODUCTION_ORDER_TRANSITIONS, JOBLOG_TRANSITIONS
@@ -594,3 +594,24 @@ def find_or_create_job_log_for_task(db: Session, task: models.ScheduledTask) -> 
         db.add(job_log)
     
     return job_log
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
+# --- ANALYTICS-SPECIFIC ---
+
+def get_downtime_by_reason(db: Session) -> List[DowntimeByReason]:
+    result = db.query(
+        models.DowntimeEvent.reason,
+        func.count(models.DowntimeEvent.id).label('count')
+    ).group_by(models.DowntimeEvent.reason).order_by(func.count(models.DowntimeEvent.id).desc()).all()
+
+    return [DowntimeByReason(reason=reason, count=count) for reason, count in result]
+
+
+def get_order_status_summary(db: Session) -> List[OrderStatusSummary]:
+    result = db.query(
+        models.ProductionOrder.current_status,
+        func.count(models.ProductionOrder.id).label('count')
+    ).group_by(models.ProductionOrder.current_status).all()
+
+    return [OrderStatusSummary(status=status.value, count=count) for status, count in result]
+

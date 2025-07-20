@@ -507,3 +507,16 @@ class JobLogStatusUpdate(BaseModel):
 class OperatorTaskUpdate(BaseModel):
     status: Literal["in_progress", "completed", "cancelled"]
     issue_reason: Optional[str] = None
+
+# --- ANALYTICS ---
+class DowntimeByReason(BaseModel):
+    reason: str
+    count: int
+
+class OrderStatusSummary(BaseModel):
+    status: str
+    count: int
+
+class AnalyticsData(BaseModel):
+    downtime_by_reason: List[DowntimeByReason]
+    order_status_summary: List[OrderStatusSummary]

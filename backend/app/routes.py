@@ -1125,3 +1125,18 @@ def report_task_issue(
     
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+# --- Analytics Routers ---
+@router.get("/analytics/summary", response_model=schemas.AnalyticsData)
+def get_analytics_summary(
+    db:Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    # Returns aggregated data for the analytics dashboard
+    downtime_summary = crud.get_downtime_by_reason(db)
+    order_summary = crud.get_order_status_summary(db)
+
+    return schemas.AnalyticsData(
+        downtime_by_reason=downtime_summary,
+        order_status_summary= order_summary
+    )
