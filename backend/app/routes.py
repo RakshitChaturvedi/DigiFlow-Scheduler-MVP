@@ -972,13 +972,10 @@ def get_operator_machine_queue(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    # In a future version, you would add a check here to ensure the current_user is in machine.authorized_operators
-
-    current_job_db, next_job_db = crud.get_machine_queue(db, machine_id_code)
+    current_job_db, next_task_db, is_ready, waiting_info = crud.get_machine_queue(db, machine_id_code)
 
     def map_job_to_schema(job: Optional[models.ScheduledTask]) -> Optional[schemas.OperatorJobOut]:
-        if not job:
-            return None
+        if not job: return None
         return schemas.OperatorJobOut(
             id=job.id,
             job_id_code=job.job_id_code,
@@ -991,7 +988,9 @@ def get_operator_machine_queue(
     return schemas.MachineQueueResponse(
         machine_name=machine.machine_id_code,
         current_job=map_job_to_schema(current_job_db),
-        next_job=map_job_to_schema(next_job_db)
+        next_task_in_sequence=map_job_to_schema(next_task_db),
+        is_next_task_ready=is_ready,
+        waiting_for=waiting_info
     )
 
 # --- Task Action Router for Operators ---

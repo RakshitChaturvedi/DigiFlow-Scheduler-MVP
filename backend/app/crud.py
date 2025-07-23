@@ -507,16 +507,18 @@ def check_and_update_production_order_completion(db: Session, production_order_i
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- OPERATOR-SPECIFIC ---
-def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[models.ScheduledTask], Optional[models.ScheduledTask]]:
+def get_machine_queue(
+    db: Session, machine_id_code: str
+) -> tuple[Optional[models.ScheduledTask], Optional[models.ScheduledTask], bool, Optional[dict]]:
     """
-    Finds the current (IN_PROGRESS, etc.) and next VALID (SCHEDULED with completed prerequisites)
-    job for a given machine. Eagerly loads related data.
+    Finds the current job and the next job in the sequence for a machine,
+    and critically, determines if that next job is ready to start.
     """
     machine = get_machine_by_code(db, machine_id_code)
     if not machine:
-        return None, None
+        return None, None, False, None
 
-    # A "current" job is one that has started but not finished. This logic is fine.
+    # Find the current job (in progress, paused, blocked).
     current_job = db.query(models.ScheduledTask).options(
         joinedload(models.ScheduledTask.production_order),
         joinedload(models.ScheduledTask.process_step_definition)
@@ -529,54 +531,51 @@ def get_machine_queue(db: Session, machine_id_code: str) -> tuple[Optional[model
         ])
     ).order_by(models.ScheduledTask.start_time).first()
 
-    # --- NEW, SMARTER LOGIC FOR FINDING THE NEXT JOB ---
-    # 1. Get all potential candidates for this machine that are scheduled.
-    scheduled_candidates = db.query(models.ScheduledTask).options(
+    # Get ONLY the single next scheduled task for this machine.
+    next_task_in_sequence = db.query(models.ScheduledTask).options(
         joinedload(models.ScheduledTask.production_order),
         joinedload(models.ScheduledTask.process_step_definition)
     ).filter(
         models.ScheduledTask.assigned_machine_id == machine.id,
         models.ScheduledTask.status == ScheduledTaskStatus.SCHEDULED
-    ).order_by(models.ScheduledTask.start_time).all()
+    ).order_by(models.ScheduledTask.start_time).first()
 
-    next_job = None
-    # 2. Loop through the candidates and find the first one that is actually ready to start.
-    for candidate_task in scheduled_candidates:
-        step_number = candidate_task.process_step_definition.step_number
-        
-        # If it's the first step, it's always ready.
-        if step_number == 1:
-            next_job = candidate_task
-            break # We found our valid next job, so we can stop looking.
+    if not next_task_in_sequence:
+        return current_job, None, False, None
 
-        # If it's not the first step, we must check the status of the previous step.
+    # Now check if the specific task is ready to start.
+    is_ready = False
+    waiting_info = None
+    step_number = next_task_in_sequence.process_step_definition.step_number
+    
+    if step_number == 1:
+        is_ready = True
+    else:
+        # It's not the first step, so we must check the status of the previous step.
         previous_step_number = step_number - 1
-        
-        # Find the scheduled task for the previous step of the SAME production order.
         previous_task = db.query(models.ScheduledTask).join(
             models.ProcessStep, models.ScheduledTask.process_step_id == models.ProcessStep.id
         ).filter(
-            models.ScheduledTask.production_order_id == candidate_task.production_order_id,
+            models.ScheduledTask.production_order_id == next_task_in_sequence.production_order_id,
             models.ProcessStep.step_number == previous_step_number
         ).first()
 
-        # 3. Check if the previous task is marked as COMPLETED.
         if previous_task and previous_task.status == ScheduledTaskStatus.COMPLETED:
-            next_job = candidate_task
-            break # We found our valid next job.
+            is_ready = True
+        elif previous_task:
+            waiting_info = {
+                "step_name": previous_task.process_step_definition.step_name,
+                "status": previous_task.status
+            }
             
-    return current_job, next_job
-
+    return current_job, next_task_in_sequence, is_ready, waiting_info
 
 def get_task_by_id(db: Session, task_id: int) -> Optional[models.ScheduledTask]:
     """Gets a single scheduled task by its primary key ID."""
     return db.query(models.ScheduledTask).filter(models.ScheduledTask.id == task_id).first()
 
 def find_or_create_job_log_for_task(db: Session, task: models.ScheduledTask) -> models.JobLog:
-    """
-    Finds an existing JobLog for a task or creates a new one.
-    This is crucial for ensuring we don't create duplicate logs.
-    """
+    # Find an existing joblog for a task or create a new one,to prevent creating duplicate logs.
     job_log = db.query(models.JobLog).filter(
         models.JobLog.production_order_id == task.production_order_id,
         models.JobLog.process_step_id == task.process_step_id,
@@ -585,11 +584,11 @@ def find_or_create_job_log_for_task(db: Session, task: models.ScheduledTask) -> 
 
     if not job_log:
         job_log = models.JobLog(
-            production_order_id=task.production_order_id,
-            process_step_id=task.process_step_id,
-            machine_id=task.assigned_machine_id,
-            actual_start_time=datetime.now(timezone.utc), # Set start time on creation
-            status=JobLogStatus.IN_PROGRESS
+            production_order_id = task.production_order_id,
+            process_step_id = task.process_step_id,
+            machine_id = task.assigned_machine_id,
+            actual_start_time = datetime.now(timezone.utc),
+            status = JobLogStatus.IN_PROGRESS
         )
         db.add(job_log)
     

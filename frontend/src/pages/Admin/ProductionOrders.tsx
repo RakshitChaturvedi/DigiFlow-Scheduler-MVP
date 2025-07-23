@@ -11,8 +11,11 @@ import { createSchedule } from '../../api/createSchedule';
 import AddProductionOrderModal from '../../components/AddProductionOrderModal';
 import ImportOrdersModal from '../../components/ImportProductionOrderModal';
 import { queryClient } from '../../lib/react-query';
+import ConfirmModal from '../../components/ConfirmModal';
 
 const ProductionOrders: React.FC = () => {
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = React.useState(false);
+  const [orderToDelete, setOrderToDelete] = React.useState<ProductionOrderData | null>(null);
   const [searchTerm, setSearchTerm] = React.useState<string>('');
   const navigate = useNavigate();
 
@@ -45,12 +48,21 @@ const ProductionOrders: React.FC = () => {
     mutationFn: deleteProductionOrder,
     onSuccess: () => {
       toast.success('Order deleted successfully.');
-      queryClient.invalidateQueries({ queryKey: ['visibleOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
+      setIsConfirmModalOpen(false); // Close the modal on success
+      setOrderToDelete(null);
     },
     onError: (err: any) => {
       toast.error(err.response?.data?.detail || 'Failed to delete order');
-    }
+      setIsConfirmModalOpen(false);
+    },
   });
+
+  const confirmDeletion = () => {
+    if (orderToDelete) {
+      deleteMutation.mutate(orderToDelete.id);
+    }
+  };
 
   const handleAddOrder = () => {
     setIsEditing(false);
@@ -221,6 +233,16 @@ const ProductionOrders: React.FC = () => {
       {isImportModalOpen && (
         <ImportOrdersModal onClose={() => setIsImportModalOpen(false)} />
       )}
+
+      <ConfirmModal
+        isOpen={isConfirmModalOpen}
+        title="Delete Production Order"
+        message={`Are you sure you want to permanently delete order "${orderToDelete?.order_id_code}"? This action cannot be undone.`}
+        onConfirm={confirmDeletion}
+        onCancel={() => setIsConfirmModalOpen(false)}
+        confirmText="Delete"
+        isDestructive={true}
+      />
     </div>
   );
 };

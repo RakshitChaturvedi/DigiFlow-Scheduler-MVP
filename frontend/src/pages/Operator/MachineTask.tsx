@@ -55,11 +55,10 @@ const MachineTaskPage: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isIssueModalOpen, setIssueModalOpen] = useState(false);
 
-  // Fetch the machine's job queue
   const { data: queue, isLoading, isError } = useQuery<MachineQueue, Error>({
     queryKey: ['machineQueue', machineIdCode],
     queryFn: () => getMachineQueue(machineIdCode!),
-    refetchInterval: 15000,
+    refetchInterval: 15000, // Refreshes to check if prerequisites are complete
     enabled: !!machineIdCode,
   });
 
@@ -68,13 +67,12 @@ const MachineTaskPage: React.FC = () => {
   };
 
   // Mutations for ALL job actions
-  const startMutation = useMutation({ mutationFn: startTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to start/resume task.") });
-  const finishMutation = useMutation({ mutationFn: finishTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to finish task.") });
-  const issueMutation = useMutation({ mutationFn: (payload: { taskId: number; reason: string }) => reportIssue(payload.taskId, { reason: payload.reason }), onSuccess: invalidateQueue, onError: () => toast.error("Failed to report issue.") });
-  const pauseMutation = useMutation({ mutationFn: pauseTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to pause task.") });
-  const cancelMutation = useMutation({ mutationFn: cancelTask, onSuccess: invalidateQueue, onError: () => toast.error("Failed to cancel task.") });
+  const startMutation = useMutation({ mutationFn: startTask, onSuccess: invalidateQueue, onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to start task.") });
+  const finishMutation = useMutation({ mutationFn: finishTask, onSuccess: invalidateQueue, onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to finish task.") });
+  const issueMutation = useMutation({ mutationFn: (payload: { taskId: number; reason: string }) => reportIssue(payload.taskId, { reason: payload.reason }), onSuccess: invalidateQueue, onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to report issue.") });
+  const pauseMutation = useMutation({ mutationFn: pauseTask, onSuccess: invalidateQueue, onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to pause task.") });
+  const cancelMutation = useMutation({ mutationFn: cancelTask, onSuccess: invalidateQueue, onError: (e: any) => toast.error(e.response?.data?.detail || "Failed to cancel task.") });
 
-  // Effect to update the clock
   useEffect(() => {
     const timerId = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timerId);
@@ -88,30 +86,14 @@ const MachineTaskPage: React.FC = () => {
   };
 
   if (isLoading) return <div className="bg-gray-900 text-white text-4xl flex items-center justify-center h-screen animate-pulse">Loading Machine Queue...</div>;
-  if (isError) return <div className="bg-gray-900 text-red-500 text-4xl flex items-center justify-center h-screen">Error: Could not load data.</div>;
+  if (isError) return <div className="bg-gray-900 text-red-500 text-4xl flex items-center justify-center h-screen">Error: Could not load data for machine '{machineIdCode}'.</div>;
   if (!queue) return <div className="bg-gray-900 text-white text-4xl flex items-center justify-center h-screen">No data available.</div>;
 
-  const { current_job, next_job } = queue;
-  const status = current_job?.status.toLowerCase();
-
-  const jobToDisplay = current_job || next_job;
-  let displayStatus = "NO JOBS READY";
-  let statusColor = "text-gray-500";
-
-  if (status === 'in_progress') {
-    displayStatus = "IN PROGRESS";
-    statusColor = 'text-green-400 animate-pulse';
-  } else if (status === 'blocked') {
-    displayStatus = "BLOCKED";
-    statusColor = 'text-red-500';
-  } else if (status === 'paused') {
-    displayStatus = "PAUSED";
-    statusColor = 'text-yellow-400';
-  } else if (next_job) {
-    displayStatus = "UP NEXT";
-    statusColor = 'text-blue-400';
-  }
+  const { current_job, next_task_in_sequence, is_next_task_ready, waiting_for } = queue;
   
+  const jobToDisplay = current_job || next_task_in_sequence;
+  const currentStatus = current_job?.status.toLowerCase();
+
   return (
     <div className="bg-gray-900 text-white h-screen flex flex-col p-4 md:p-8 font-sans">
       <ReportIssueModal isOpen={isIssueModalOpen} onClose={() => setIssueModalOpen(false)} onSubmit={handleReportIssue} />
@@ -129,10 +111,26 @@ const MachineTaskPage: React.FC = () => {
       <main className="flex-1 flex flex-col items-center justify-center text-center">
         {jobToDisplay ? (
           <>
-            <div className={`text-4xl font-semibold mb-4 ${statusColor}`}>{displayStatus}</div>
+            <div className={`text-4xl font-semibold mb-4 ${
+              current_job ? 
+                (currentStatus === 'in_progress' ? 'text-green-400 animate-pulse' :
+                 currentStatus === 'blocked' ? 'text-red-500' :
+                 currentStatus === 'paused' ? 'text-yellow-400' : 'text-gray-400')
+              : (is_next_task_ready ? 'text-blue-400' : 'text-gray-500')
+            }`}>
+              {current_job ? currentStatus?.replace('_', ' ').toUpperCase() : (is_next_task_ready ? 'UP NEXT' : 'WAITING')}
+            </div>
+            
             <div className="text-8xl md:text-9xl font-bold mb-2">{jobToDisplay.job_id_code}</div>
             <div className="text-5xl md:text-6xl text-gray-300 mb-2">{jobToDisplay.product_name}</div>
             <div className="text-3xl text-gray-400">Qty: {jobToDisplay.quantity_to_produce} | Priority: {jobToDisplay.priority}</div>
+
+            {!is_next_task_ready && waiting_for && !current_job && (
+                <div className="mt-6 p-4 bg-yellow-900 border border-yellow-700 rounded-lg max-w-lg">
+                    <p className="text-yellow-300 text-xl font-semibold">Cannot Start Job</p>
+                    <p className="text-yellow-400 text-lg">Previous step '{waiting_for.step_name}' is not complete yet.</p>
+                </div>
+            )}
           </>
         ) : (
           <div className="text-5xl text-gray-500">NO JOBS READY FOR THIS MACHINE</div>
@@ -141,29 +139,30 @@ const MachineTaskPage: React.FC = () => {
       
       <footer className="w-full">
         {(() => {
-          if (!current_job && !next_job) return null; // No jobs, no buttons
+          const status = queue?.current_job?.status.toLowerCase();
 
           if (status === 'in_progress') {
             return (
               <div className="grid grid-cols-2 gap-4">
-                <button onClick={() => pauseMutation.mutate(current_job!.id)} disabled={pauseMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-900">PAUSE</button>
-                <button onClick={() => finishMutation.mutate(current_job!.id)} disabled={finishMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-red-900">FINISH</button>
+                <button onClick={() => pauseMutation.mutate(queue.current_job!.id)} disabled={pauseMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-900">PAUSE</button>
+                <button onClick={() => finishMutation.mutate(queue.current_job!.id)} disabled={finishMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-red-900">FINISH</button>
               </div>
             );
           }
           
           if (status === 'paused' || status === 'blocked') {
             return (
-              <div className="grid grid-cols-2 gap-4">
-                <button onClick={() => { if (window.confirm('Are you sure you want to cancel this job?')) { cancelMutation.mutate(current_job!.id); } }} disabled={cancelMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-gray-600 hover:bg-gray-700 disabled:bg-gray-900">CANCEL</button>
-                <button onClick={() => startMutation.mutate(current_job!.id)} disabled={startMutation.isPending} className="w-full text-4xl font-bold p-6 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900">RESUME</button>
+              <div className="grid grid-cols-3 gap-4">
+                <button onClick={() => setIssueModalOpen(true)} disabled={issueMutation.isPending} className="w-full text-3xl font-bold p-6 rounded-lg bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-900">REPORT ISSUE</button>
+                <button onClick={() => { if (window.confirm('Are you sure you want to cancel this job?')) { cancelMutation.mutate(queue.current_job!.id); } }} disabled={cancelMutation.isPending} className="w-full text-3xl font-bold p-6 rounded-lg bg-gray-600 hover:bg-gray-700 disabled:bg-gray-900">CANCEL</button>
+                <button onClick={() => startMutation.mutate(queue.current_job!.id)} disabled={startMutation.isPending} className="w-full text-3xl font-bold p-6 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900">RESUME</button>
               </div>
             );
           }
 
-          if (next_job) {
+          if (next_task_in_sequence && is_next_task_ready) {
             return (
-              <button onClick={() => startMutation.mutate(next_job.id)} disabled={startMutation.isPending} className="col-span-2 w-full text-6xl font-bold p-8 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900">
+              <button onClick={() => startMutation.mutate(next_task_in_sequence.id)} disabled={startMutation.isPending} className="w-full text-6xl font-bold p-8 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900">
                 {startMutation.isPending ? '...' : 'START JOB'}
               </button>
             );
@@ -176,5 +175,4 @@ const MachineTaskPage: React.FC = () => {
   );
 };
 
-
-export default MachineTaskPage
+export default MachineTaskPage;

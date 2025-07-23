@@ -7,30 +7,36 @@ from backend.app.enums import OrderStatus, JobLogStatus, ScheduledTaskStatus
 from backend.app.utils import ensure_utc_aware
 
 # --- Operator-Specific Schemas ---
+class WaitingInfo(BaseModel):
+    """Details about the preceding task that is blocking the next job."""
+    step_name: str
+    status: ScheduledTaskStatus
+
 class OperatorMachineOut(BaseModel):
-    """A simplified view of a machine for the selection screen."""
     id: int
     machine_id_code: str
     machine_type: str
-
     model_config = ConfigDict(from_attributes=True)
 
 class OperatorJobOut(BaseModel):
-    """A simplified view of a scheduled task for the operator UI."""
     id: int
     job_id_code: Optional[str] = "N/A"
-    product_name: str
+    product_name: Optional[str]
     quantity_to_produce: int
     priority: int
     status: ScheduledTaskStatus
-
     model_config = ConfigDict(from_attributes=True)
 
 class MachineQueueResponse(BaseModel):
     """The complete data payload for the operator's task view for one machine."""
     machine_name: str
     current_job: Optional[OperatorJobOut] = None
-    next_job: Optional[OperatorJobOut] = None
+    # This is the next task in the sequence, regardless of its readiness
+    next_task_in_sequence: Optional[OperatorJobOut] = None
+    # This flag tells the UI if the "Start" button should be enabled
+    is_next_task_ready: bool = False
+    # If not ready, this explains why
+    waiting_for: Optional[WaitingInfo] = None
 
 class ReportIssueRequest(BaseModel):
     """The request body when an operator reports an issue."""

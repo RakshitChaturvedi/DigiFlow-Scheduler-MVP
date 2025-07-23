@@ -1,206 +1,88 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import apiClient from '../api/axios';
-import type { ProductionOrderData } from '../api/productionOrdersApi';
+import { type SubmitHandler, useForm } from 'react-hook-form';
+import { type ProductionOrderData, createProductionOrder, updateProductionOrder } from '../api/productionOrdersApi';
+import toast from 'react-hot-toast';
+
+type FormData = Omit<ProductionOrderData, 'id' | 'created_at' | 'updated_at' | 'progress'>;
 
 interface Props {
-    onClose: () => void;
-    isEditing?: boolean;
-    initialData?: Partial<ProductionOrderData>;
+  onClose: () => void;
+  isEditing?: boolean;
+  initialData?: ProductionOrderData;
 }
 
-const AddProductionOrderModal: React.FC<Props> = ({ onClose, isEditing=false, initialData }) => {
-    const [formData, setFormData] = useState({
-        order_id_code: '',
-        product_name: '',
-        product_route_id: '',
-        quantity_to_produce: 1,
+const AddProductionOrderModal: React.FC<Props> = ({ onClose, isEditing = false, initialData }) => {
+    const { register, handleSubmit, reset, formState: { errors,  isSubmitting } } = useForm<FormData>({
+        defaultValues: initialData ? {
+        ...initialData,
+        arrival_time: initialData.arrival_time.slice(0, 16), // Format for datetime-local input
+        due_date: initialData.due_date ? initialData.due_date.slice(0, 10) : '', // Format for date input
+        } : {
         priority: 1,
-        arrival_time: new Date().toISOString(),
-        due_date: '',
-        current_status: "pending", 
+        quantity_to_produce: 1,
+        current_status: 'pending',
+        }
     });
 
     const queryClient = useQueryClient();
 
-    useEffect(()=> {
-        if (isEditing && initialData) {
-            setFormData({
-                order_id_code: initialData.order_id_code || '',
-                product_name: initialData.product_name || '',
-                product_route_id: initialData.product_route_id || '',
-                quantity_to_produce: initialData.quantity_to_produce || 1,
-                priority: initialData.priority || 1,
-                arrival_time: new Date(initialData.arrival_time || Date.now()).toISOString(),
-                due_date: initialData.due_date ? new Date(initialData.due_date).toISOString().split('T')[0] : '',
-                current_status: initialData.current_status || 'pending'
-            });
-        }
-    }, [isEditing, initialData])
-
     const mutation = useMutation({
-        mutationFn: async (order: Partial<ProductionOrderData>) => {
-            if (isEditing && initialData) {
-                const res = await apiClient.put(`/api/orders/${initialData.id}`, order);
-                return res.data;
-            } else {
-                const res = await apiClient.post('/api/orders/', order);
-                return res.data;
-            }
+        mutationFn: (order: Omit<ProductionOrderData, 'id' | 'created_at' | 'updated_at' | 'progress'>) => {
+        return isEditing && initialData
+            ? updateProductionOrder(initialData.id, order)
+            : createProductionOrder(order);
         },
         onSuccess: () => {
-            alert(isEditing ? 'Production order updated successfully!' : 'Production order created successfully!');
-            queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
-            onClose();
+        toast.success(`Production order ${isEditing ? 'updated' : 'created'} successfully!`);
+        queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
+        onClose();
         },
         onError: (err: any) => {
-            alert(err.response?.data?.detail || 'Failed to create order');
+        toast.error(err.response?.data?.detail || 'Failed to save order');
         },
     });
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>)  => {
-        const {name, value} = e.target;
-
-        setFormData((prev) => ({
-            ...prev,
-            [name]: name == 'quantity_to_produce' || name ==='priority'
-                ? Number(value)
-                : value,
-        }));
-    };
-
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        console.log("Submitting:", formData);
+    const onSubmit: SubmitHandler<FormData> = (data) => {
         mutation.mutate({
-            ...formData,
-            due_date: formData.due_date === '' ? null : formData.due_date,
-            current_status: formData.current_status as 'pending' | 'in_progress' | 'completed' | 'cancelled',
+        ...data,
+        due_date: data.due_date || null,
+        priority: Number(data.priority),
+        quantity_to_produce: Number(data.quantity_to_produce),
         });
     };
 
+    useEffect(() => {
+        if (initialData) {
+        reset({
+            ...initialData,
+            arrival_time: initialData.arrival_time.slice(0, 16),
+            due_date: initialData.due_date ? initialData.due_date.slice(0, 10) : '',
+        });
+        }
+    }, [initialData, reset]);
+
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
-                <h2 className="text-lg font-bold mb-4">
-                    {isEditing ? 'Edit Production Order' : 'Add Production Order'}
-                </h2>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Order ID Code
-                        </label>
-                        <input
-                            type="text"
-                            name="order_id_code"
-                            value={formData.order_id_code}
-                            onChange={handleChange}
-                            required
-                            placeholder="e.g. JOB20250703_01"
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Product Name
-                        </label>
-                        <input
-                            type="text"
-                            name="product_name"
-                            value={formData.product_name}
-                            onChange={handleChange}
-                            placeholder="e.g. Cap for 250ml Bottle"
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Product Route ID
-                        </label>
-                        <input
-                            type="text"
-                            name="product_route_id"
-                            value={formData.product_route_id}
-                            onChange={handleChange}
-                            required
-                            placeholder="e.g. 2"
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Quantity to Produce
-                        </label>
-                        <input
-                            type="number"
-                            name="quantity_to_produce"
-                            value={formData.quantity_to_produce}
-                            onChange={handleChange}
-                            min={1}
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Priority (1 = highest)
-                        </label>
-                        <input
-                            type="number"
-                            name="priority"
-                            value={formData.priority}
-                            onChange={handleChange}
-                            min={1}
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Arrival Time (auto-set)
-                        </label>
-                        <input
-                            type="datetime-local"
-                            name="arrival_time"
-                            value={formData.arrival_time.slice(0, 16)}
-                            onChange={handleChange}
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Due Date
-                        </label>
-                        <input
-                            type="date"
-                            name="due_date"
-                            value={formData.due_date}
-                            onChange={handleChange}
-                            className="w-full border border-gray-300 rounded px-3 py-2"
-                        />
-                    </div>
-
-                    <div className="flex justify-end gap-2 mt-6">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                        >
-                            {isEditing ? 'Update Order' : 'Create Order'}
-                        </button>
-                    </div>
-                </form>
+        <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
+            <h2 className="text-lg font-bold mb-4">{isEditing ? 'Edit Production Order' : 'Add Production Order'}</h2>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <input {...register('order_id_code', { required: true })} placeholder="Order ID Code" className="w-full border p-2 rounded" />
+            <input {...register('product_name')} placeholder="Product Name" className="w-full border p-2 rounded" />
+            <input {...register('product_route_id', { required: true })} placeholder="Product Route ID" className="w-full border p-2 rounded" />
+            <input type="number" {...register('quantity_to_produce', { required: true, valueAsNumber: true, min: 1 })} placeholder="Quantity" className="w-full border p-2 rounded" />
+            <input type="number" {...register('priority', { required: true, valueAsNumber: true, min: 1 })} placeholder="Priority" className="w-full border p-2 rounded" />
+            <input type="datetime-local" {...register('arrival_time', { required: true })} className="w-full border p-2 rounded" />
+            <input type="date" {...register('due_date')} className="w-full border p-2 rounded" />
+            
+            <div className="flex justify-end gap-2 mt-6">
+                <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Cancel</button>
+                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-300">
+                {isSubmitting ? 'Saving...' : (isEditing ? 'Update Order' : 'Create Order')}
+                </button>
             </div>
+            </form>
+        </div>
         </div>
     );
 };

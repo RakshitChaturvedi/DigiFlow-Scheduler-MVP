@@ -1,9 +1,9 @@
-// src/components/AddMachineModal.tsx
-
 import React from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { createMachine, updateMachine, type MachineData } from '../api/machinesAPI'
 import { queryClient } from '../lib/react-query';
+import toast from 'react-hot-toast';
+
 
 type Props = {
   isEditing: boolean;
@@ -24,11 +24,12 @@ const AddMachineModal: React.FC<Props> = ({ isEditing, initialData, onClose }) =
       ? (data: any) => updateMachine(initialData!.id, data)
       : createMachine,
     onSuccess: () => {
+      toast.success(`Machine ${isEditing ? 'updated' : 'created'} successfully!`);
       queryClient.invalidateQueries({ queryKey: ['machines'] });
       onClose();
     },
     onError: (err: any) => {
-      alert(err.response?.data?.detail || 'Failed to save machine');
+      toast.error(err.response?.data?.detail || 'Failed to save machine');
     },
   });
 
