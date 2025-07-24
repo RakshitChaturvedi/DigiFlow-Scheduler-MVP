@@ -6,7 +6,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects.postgresql import UUID
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 
 import uuid
 
@@ -215,7 +215,7 @@ def validate_before_flush(session, flush_context, instances):
         # Using attributes.get_history().has_changes() for universal compatibility
         
         if isinstance(obj, ProductionOrder):
-            hist_order_id = attributes.get_history(obj, 'order_id_code')
+            hist_order_id = attributes.get_history(obj, 'order_id_code')            
             if obj in session.new or hist_order_id.has_changes():
                 existing = session.query(ProductionOrder).filter(
                     ProductionOrder.order_id_code == obj.order_id_code,

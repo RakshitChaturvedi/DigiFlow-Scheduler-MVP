@@ -11,7 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 # Assuming these are defined in app/config.py
-from backend.app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK
+from backend.app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK, WORKING_HOUR_START, WORKING_HOUR_END, NON_WORKING_DAYS
 from backend.app.database import SessionLocal
 from backend.app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
 from backend.app.schemas import ProductionOrderOut, ScheduledTaskResponse
@@ -68,7 +68,7 @@ def load_and_prepare_data_for_ortools(
         logging.warning("No active machines found. Cannot create a schedule.")
         return {}, {}, [], []
 
-    # --- FIX 1: DYNAMIC & CORRECT JOB POOL SELECTION ---
+    # --- JOB POOL SELECTION ---
     # Fetch orders that are not yet fully completed.
     production_orders_orm = db.query(ProductionOrder).filter(
         ProductionOrder.current_status.in_([
@@ -78,12 +78,30 @@ def load_and_prepare_data_for_ortools(
         ])
     ).all()
 
+    last_completed_steps = {}
+
+    process_step_id_to_num = {ps.id: ps.step_number for ps in db.query(ProcessStep.id, ProcessStep.step_number).all()}
+
+    # find latest completed joblog for each relevent production order
+    completed_logs = db.query(
+        JobLog.production_order_id,
+        func.max(JobLog.process_step_id).label('last_step_id') # get highest process step id
+    ).filter(
+        JobLog.status == JobLogStatus.COMPLETED,
+        JobLog.production_order_id.in_([o.id for o in production_orders_orm])
+    ).group_by(JobLog.production_order_id).all()
+
+    # map the last completed step_id to its step_num
+    for log in completed_logs:
+        last_step_number = process_step_id_to_num.get(log.last_step_id, 0)
+        last_completed_steps[log.producion_order_id] = last_step_number
+
     for order in production_orders_orm:
         if order.due_date:
             order.due_date = ensure_utc_aware(order.due_date)
         order.arrival_time = ensure_utc_aware(order.arrival_time)
 
-    # --- FIX 2: ROBUST IN-PROGRESS & DOWNTIME HANDLING ---
+    # --- IN-PROGRESS & DOWNTIME HANDLING ---
     in_progress_logs = db.query(JobLog).filter(
         JobLog.actual_start_time.isnot(None),
         JobLog.actual_end_time.is_(None)
@@ -143,6 +161,7 @@ def load_and_prepare_data_for_ortools(
 
     # Process all other pending jobs and future steps of in-progress jobs
     for order in production_orders_orm:
+        start_scheduling_from_step = last_completed_steps.get(order.id, 0) + 1
         order_id_code = order.order_id_code
         route_id = order.product_route_id
         
@@ -155,7 +174,12 @@ def load_and_prepare_data_for_ortools(
 
         if str(route_id) in process_steps_by_route:
             for step_num, step_data in sorted(process_steps_by_route[str(route_id)].items()):
+
+                if step_num < start_scheduling_from_step: # only schedule steps that have not been completed
+                    continue
+
                 task_key = (order_id_code, step_num)
+
                 if task_key in all_tasks_for_solver: # Skip if it was an in-progress task
                     print(f"[SKIP] Duplicate task_key found: {task_key}")
                     continue
@@ -164,23 +188,22 @@ def load_and_prepare_data_for_ortools(
                 quantity = int(order.quantity_to_produce or 1)
                 op_duration = max(1, base_per_unit * quantity)
 
-                # DEBUG
-                print(f"[DEBUG] Order {order_id_code}, Step {step_num}: base={base_per_unit}, qty={quantity} → duration={op_duration}")
-                print("[DEBUG] route_id keys available:", list(process_steps_by_route.keys()))
-                print(f"[DEBUG] checking route_id = {route_id}")
-
+                earliest_start_mins = max(0, int((order.arrival_time - scheduling_anchor_time).total_seconds() // 60))
+                deadline_offset_mins = None
+                if order.due_date:
+                    deadline_offset_mins = int((order.due_date - scheduling_anchor_time).total_seconds() // 60)
 
                 all_tasks_for_solver[task_key] = TaskData(
                     production_order_id=order.id, 
-                    job_id_code=order_id_code, 
+                    job_id_code=order.order_id_code, 
                     step=step_num,
                     process_step_id=step_data.id, 
                     machine_type=step_data.required_machine_type,
                     process_step_name=step_data.step_name, 
                     is_fixed=False,
                     operation_duration=op_duration,
-                    earliest_start_mins=start_offset_mins,
-                    deadline_offset_mins=deadline_offset
+                    earliest_start_mins=earliest_start_mins,
+                    deadline_offset_mins=deadline_offset_mins
                 )
                 job_to_tasks[order_id_code].append(task_key)
                 print(f"[TASK ADDED] {task_key} → duration: {op_duration}")
@@ -260,6 +283,39 @@ def schedule_with_ortools(
 
             if selected_interval:
                 task_intervals[task_key] = selected_interval
+
+    horizon_days = (horizon // 1440) + 2 # buffer for 2 days
+
+
+    for machine_id in machine_instances.keys():
+        for day in range(horizon_days):
+            current_day = scheduling_anchor_time.date() + timedelta(days=day)
+
+            # Check if entire day is a non-working day
+            if current_day.weekday() in NON_WORKING_DAYS:
+                start_of_day = datetime(current_day.year, current_day.month, current_day.day, tzinfo=timezone.utc)
+                start_offset = max(0, int((start_of_day - scheduling_anchor_time).total_seconds() // 60))
+                # create a 24 hour forbidden interval for the entire day
+                interval = model.NewFixedSizeIntervalVar(start_offset, 1440, f"nonwork_{machine_id}_day_{day}")
+                intervals_on_specific_machine[machine_id].append(interval)
+                continue
+
+            start_of_work = datetime(current_day.year, current_day.month, current_day.day, WORKING_HOUR_START, 0, tzinfo=timezone.utc)
+            end_of_work = datetime(current_day.year, current_day.month, current_day.day, WORKING_HOUR_END, 0, tzinfo=timezone.utc)
+
+            # Interval from midnight to start of work
+            start_offset_before = max(0, int((start_of_work.replace(hour=0, minute=0) - scheduling_anchor_time).total_seconds() // 60))
+            duration_before = max(0, int((start_of_work - start_of_work.replace(hour=0, minute=0)).total_seconds() // 60))
+            if duration_before > 0:
+                interval_before = model.NewFixedSizeIntervalVar(start_offset_before, duration_before, f"nonwork_{machine_id}_before_{day}")
+                intervals_on_specific_machine[machine_id].append(interval_before)
+
+            # Interval from end of work to midnight
+            start_offset_after = max(0, int((end_of_work - scheduling_anchor_time).total_seconds() // 60))
+            duration_after = max(0, int((end_of_work.replace(hour=23, minute=59) - end_of_work).total_seconds() // 60))
+            if duration_after > 0:
+                interval_after = model.NewFixedSizeIntervalVar(start_offset_after, duration_after, f"nonwork_{machine_id}_after_{day}")
+                intervals_on_specific_machine[machine_id].append(interval_after)
 
     # --- ADD CONSTRAINTS ---
     # 1. Precedence

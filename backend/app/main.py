@@ -1,4 +1,5 @@
 import logging
+import warnings
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
@@ -30,6 +31,8 @@ from backend.app.routes import operator_router, task_action_router
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__) # Use a logger specific to this module
 
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # Initialize the FastAPI application
 app = FastAPI(

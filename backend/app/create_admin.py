@@ -23,7 +23,7 @@ def create_admin_user():
     try:
         print(f"Checking if user '{ADMIN_USERNAME}' already exists...")
 
-        # Optionally check if user already exists
+        # check if user already exists
         existing_user = db.query(User).filter_by(username=ADMIN_USERNAME).first()
         if existing_user:
             print("Admin user already exists.")

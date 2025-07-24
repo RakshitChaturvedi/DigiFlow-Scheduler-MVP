@@ -651,52 +651,23 @@ def get_scheduled_tasks(
     return [ScheduledTaskResponse.model_validate(task) for task in tasks]
 
 @router.put("/schedule/{task_id}", response_model=ScheduledTaskResponse, tags=["Scheduling"])
-def updae_scheduled_task(
+def update_scheduled_task(
     task_id: int,
     update_data: schemas.ScheduledTaskUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
     task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    
     if not task:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
     
-    original_status = task.status
+    # Update the task object with the provided data
     for attr, value in update_data.model_dump(exclude_unset=True).items():
         setattr(task, attr, value)
 
-    new_status = update_data.status
-    if original_status == "pending" and new_status == "scheduled":
-        task.scheduled_time = datetime.now(timezone.utc)
-
     db.commit()
     db.refresh(task)
-
-    if original_status != task.status and task.status in ["completed", "cancelled"]:
-        existing_log = db.query(JobLog).filter_by(
-            production_order_id = task.production_order_id,
-            process_step_id = task.process_step_id,
-            machine_id = task.assigned_machine_id,
-            status = task.status
-        ).first()
-
-        if not existing_log:
-            try:
-                job_log_data = JobLogCreate(
-                    production_order_id=task.production_order_id,
-                    process_step_id=task.process_step_id,
-                    machine_id=task.assigned_machine_id,
-                    actual_start_time= task.start_time or task.scheduled_time,
-                    actual_end_time=task.end_time or datetime.now(timezone.utc),
-                    status= task.status,
-                    remarks=None
-                )
-                job_log = crud.create_job_log(db, job_log_data)
-                db.commit()
-                db.refresh(job_log)
-            except Exception as e:
-                db.rollback()
-                raise HTTPException(status_code=500, detail=f"Failed to create job log: {str(e)}")
 
     return ScheduledTaskResponse.model_validate(task)
 

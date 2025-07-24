@@ -510,10 +510,7 @@ def check_and_update_production_order_completion(db: Session, production_order_i
 def get_machine_queue(
     db: Session, machine_id_code: str
 ) -> tuple[Optional[models.ScheduledTask], Optional[models.ScheduledTask], bool, Optional[dict]]:
-    """
-    Finds the current job and the next job in the sequence for a machine,
-    and critically, determines if that next job is ready to start.
-    """
+    
     machine = get_machine_by_code(db, machine_id_code)
     if not machine:
         return None, None, False, None
@@ -575,20 +572,19 @@ def get_task_by_id(db: Session, task_id: int) -> Optional[models.ScheduledTask]:
     return db.query(models.ScheduledTask).filter(models.ScheduledTask.id == task_id).first()
 
 def find_or_create_job_log_for_task(db: Session, task: models.ScheduledTask) -> models.JobLog:
-    # Find an existing joblog for a task or create a new one,to prevent creating duplicate logs.
+    # Find a log based on the unique combination of order and process step
     job_log = db.query(models.JobLog).filter(
         models.JobLog.production_order_id == task.production_order_id,
-        models.JobLog.process_step_id == task.process_step_id,
-        models.JobLog.machine_id == task.assigned_machine_id
+        models.JobLog.process_step_id == task.process_step_id
     ).first()
 
     if not job_log:
         job_log = models.JobLog(
-            production_order_id = task.production_order_id,
-            process_step_id = task.process_step_id,
-            machine_id = task.assigned_machine_id,
-            actual_start_time = datetime.now(timezone.utc),
-            status = JobLogStatus.IN_PROGRESS
+            production_order_id=task.production_order_id,
+            process_step_id=task.process_step_id,
+            machine_id=task.assigned_machine_id,
+            actual_start_time=datetime.now(timezone.utc),
+            status=JobLogStatus.IN_PROGRESS # A new log is always starting now
         )
         db.add(job_log)
     
