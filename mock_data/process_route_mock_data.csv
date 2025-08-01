@@ -1,25 +1,45 @@
 product_route_id,step_number,required_machine_type,base_duration_per_unit_mins,step_name,id
-1,1,HMC,180,,1
-1,2,VMC,120,,2
-1,3,VMC,90,,3
-1,4,Sinker EDM,240,,4
-2,1,Manual Lathe,30,,5
-2,2,VMC,240,,6
-2,3,Wire EDM,180,,7
-2,4,Surface Grinder,60,,8
-2,5,Manual Drill Press,20,,9
-3,1,HMC,300,,10
-3,2,Radial Drill Press,45,,11
-3,3,Manual Lathe,60,,12
-4,1,HMC,240,,13
-4,2,VMC,180,,14
-4,3,Sinker EDM,360,,15
-4,4,Manual Drill Press,30,,16
-5,1,VMC,150,,17
-5,2,VMC,100,,18
-5,3,Cylindrical Grinder,80,,19
-5,4,Wire EDM,90,,20
-6,1,VMC,120,,21
-6,2,Surface Grinder,50,,22
-6,3,CNC Lathe,60,,23
-6,4,Cylindrical Grinder,40,,24
+FC1000-01,1,VMC,480,Core & Cavity Rough Milling,1
+FC1000-01,2,DRILL,120,Deep Hole Drilling for Cooling Channels,2
+FC1000-01,3,VMC,600,Finish Milling & Hard Machining,3
+FC1000-01,4,EDM,240,Spark Erosion (EDM) for Fine Details,4
+FC1000-01,5,FINISHING,180,Final Polish & Texturing,5
+FC1000-01,6,INSPECTION,90,CMM Inspection,6
+ICL1000-01,1,VMC,240,Core & Cavity Rough Milling,7
+ICL1000-01,2,VMC,300,Finish Milling,8
+ICL1000-01,3,GRINDING,90,Surface Grinding,9
+ICL1000-01,4,FINISHING,120,Final Polish,10
+ICL1000-01,5,INSPECTION,60,CMM Inspection,11
+ICJ1000-01,1,VMC,550,Core & Cavity Rough Milling,12
+ICJ1000-01,2,DRILL,150,Deep Hole Drilling for Cooling Channels,13
+ICJ1000-01,3,TURNING,180,CNC Turning for Round Features,14
+ICJ1000-01,4,VMC,720,Finish Milling & Hard Machining,15
+ICJ1000-01,5,EDM,300,Spark Erosion (EDM) for Logos/Text,16
+ICJ1000-01,6,FINISHING,240,Final Polish & Texturing,17
+ICJ1000-01,7,INSPECTION,120,CMM Inspection,18
+ICJ500-01,1,VMC,420,Core & Cavity Rough Milling,19
+ICJ500-01,2,DRILL,110,Deep Hole Drilling,20
+ICJ500-01,3,VMC,540,Finish Milling,21
+ICJ500-01,4,EDM,200,Spark Erosion (EDM),22
+ICJ500-01,5,FINISHING,180,Final Polish,23
+ICJ500-01,6,INSPECTION,90,CMM Inspection,24
+ICL750-01,1,VMC,210,Core & Cavity Rough Milling,25
+ICL750-01,2,VMC,280,Finish Milling,26
+ICL750-01,3,GRINDING,80,Surface Grinding,27
+ICL750-01,4,FINISHING,110,Final Polish,28
+ICL750-01,5,INSPECTION,60,CMM Inspection,29
+ICJ750-01,1,VMC,480,Core & Cavity Rough Milling,30
+ICJ750-01,2,DRILL,130,Deep Hole Drilling,31
+ICJ750-01,3,VMC,600,Finish Milling,32
+ICJ750-01,4,EDM,240,Spark Erosion (EDM),33
+ICJ750-01,5,FINISHING,200,Final Polish,34
+ICJ750-01,6,INSPECTION,100,CMM Inspection,35
+ICL130-01,1,VMC,180,Core & Cavity Milling,36
+ICL130-01,2,GRINDING,60,Surface Grinding,37
+ICL130-01,3,FINISHING,90,Final Polish,38
+ICL130-01,4,INSPECTION,45,CMM Inspection,39
+ICJ130-01,1,VMC,240,Core & Cavity Rough Milling,40
+ICJ130-01,2,VMC,360,Finish Milling,41
+ICJ130-01,3,EDM,120,Spark Erosion (EDM),42
+ICJ130-01,4,FINISHING,120,Final Polish,43
+ICJ130-01 ,5,INSPECTION,60,CMM Inspection,44

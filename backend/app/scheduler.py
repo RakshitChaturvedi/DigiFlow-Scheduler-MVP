@@ -11,7 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 # Assuming these are defined in app/config.py
-from backend.app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK, WORKING_HOUR_START, WORKING_HOUR_END, NON_WORKING_DAYS
+from backend.app.config import BASE_SOLVER_TIMEOUT, TIMEOUT_PER_TASK, NON_WORKING_DAYS
 from backend.app.database import SessionLocal
 from backend.app.models import DowntimeEvent, JobLog, Machine, ProcessStep, ProductionOrder, ScheduledTask
 from backend.app.schemas import ProductionOrderOut, ScheduledTaskResponse
@@ -300,23 +300,6 @@ def schedule_with_ortools(
                 intervals_on_specific_machine[machine_id].append(interval)
                 continue
 
-            start_of_work = datetime(current_day.year, current_day.month, current_day.day, WORKING_HOUR_START, 0, tzinfo=timezone.utc)
-            end_of_work = datetime(current_day.year, current_day.month, current_day.day, WORKING_HOUR_END, 0, tzinfo=timezone.utc)
-
-            # Interval from midnight to start of work
-            start_offset_before = max(0, int((start_of_work.replace(hour=0, minute=0) - scheduling_anchor_time).total_seconds() // 60))
-            duration_before = max(0, int((start_of_work - start_of_work.replace(hour=0, minute=0)).total_seconds() // 60))
-            if duration_before > 0:
-                interval_before = model.NewFixedSizeIntervalVar(start_offset_before, duration_before, f"nonwork_{machine_id}_before_{day}")
-                intervals_on_specific_machine[machine_id].append(interval_before)
-
-            # Interval from end of work to midnight
-            start_offset_after = max(0, int((end_of_work - scheduling_anchor_time).total_seconds() // 60))
-            duration_after = max(0, int((end_of_work.replace(hour=23, minute=59) - end_of_work).total_seconds() // 60))
-            if duration_after > 0:
-                interval_after = model.NewFixedSizeIntervalVar(start_offset_after, duration_after, f"nonwork_{machine_id}_after_{day}")
-                intervals_on_specific_machine[machine_id].append(interval_after)
-
     # --- ADD CONSTRAINTS ---
     # 1. Precedence
     for job_id, steps in jobs_map.items():
@@ -341,8 +324,8 @@ def schedule_with_ortools(
                 interval = model.NewFixedSizeIntervalVar(start_offset, duration, f"downtime_{event.id}")
                 intervals_on_specific_machine[mid].append(interval)
 
-    # --- FIX 4: ESSENTIAL FEATURE - DEADLINE CONSTRAINTS ---
     all_orders = {task.production_order_id: task for task in tasks.values()}
+    deadline_penalties = []
     for order_id, task in all_orders.items():
         order = db_session.get(ProductionOrder, task.production_order_id)
         if order and order.due_date:
@@ -353,7 +336,18 @@ def schedule_with_ortools(
                 if last_step_key not in task_intervals:
                     logging.error(f"Deadline constraint target {last_step_key} not found in task_intervals. Task may have been skipped.")
                 else:
-                    model.Add(task_intervals[last_step_key].EndExpr() <= deadline_offset)
+                    end_expr = task_intervals[last_step_key].EndExpr()
+                    # Calculatig how late job is
+                    late_by = model.NewIntVar(0, horizon, f"late_{order_id}")
+                    model.Add(late_by >= end_expr - deadline_offset)
+
+                    # penalty multiplier (10 points per minute late)
+                    penalty_per_minute = 10
+                    weighted_penalty = model.NewIntVar(0, horizon * penalty_per_minute, f"penalty_{order_id}")
+                    model.AddMultiplicationEquality(weighted_penalty, [late_by, penalty_per_minute])
+
+                    # save for objective function
+                    deadline_penalties.append(weighted_penalty)
                     logging.info(f"Added deadline constraint for job {order.order_id_code} at minute {deadline_offset}.")
 
 
@@ -361,7 +355,7 @@ def schedule_with_ortools(
     makespan = model.NewIntVar(0, horizon, 'makespan')
     if task_intervals:
         model.AddMaxEquality(makespan, [iv.EndExpr() for iv in task_intervals.values()])
-    model.Minimize(makespan)
+    model.Minimize(1*makespan + 3*sum(deadline_penalties))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = BASE_SOLVER_TIMEOUT + (len(tasks) * TIMEOUT_PER_TASK)

@@ -96,41 +96,37 @@ def import_production_orders(
     current_user = Depends(require_admin)
 ):
     if not file.filename or not file.filename.endswith(('.csv', '.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Invalid file format. Only CSV or Excel files are supported.")
+        raise HTTPException(status_code=400, detail="Invalid file format.")
+    
     try:
         if file.filename.endswith('.csv'):
             df = pd.read_csv(file.file)
-            df = df.where(pd.notnull(df), None)  # Replace NaN with None for Pydantic
-            df['product_name'] = df['product_name'].fillna("Unnamed Product")
-            df['product_route_id'] = df['product_route_id'].astype(str)
-            df['due_date'] = pd.to_datetime(df['due_date'], dayfirst=True, errors='coerce')
-            df['due_date'] = df['due_date'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
-
-            df['arrival_time'] = pd.to_datetime(df['arrival_time'], dayfirst=True, errors='coerce')
-            df['arrival_time'] = df['arrival_time'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
-
-           
         else:
             df = pd.read_excel(file.file)
-            df = df.where(pd.notnull(df), None)  # Replace NaN with None for Pydantic
-            df['product_route_id'] = df['product_route_id'].astype(str)
-            df['product_name'] = df['product_name'].fillna("Unnamed Product")
-            df['due_date'] = pd.to_datetime(df['due_date'], dayfirst=True, errors='coerce')
-            df['due_date'] = df['due_date'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
 
-            df['arrival_time'] = pd.to_datetime(df['arrival_time'], dayfirst=True, errors='coerce')
-            df['arrival_time'] = df['arrival_time'].apply(lambda x: parse_ist_to_utc(x) if pd.notnull(x) else None)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
-    
-    try:
+        df['arrival_time'] = pd.to_datetime(df['arrival_time'], format='%d-%m-%Y %H:%M', errors='coerce')
+        df['due_date'] = pd.to_datetime(df['due_date'], format='%d-%m-%Y %H:%M', errors='coerce')
+
         records = cast(List[Dict[str, Any]], df.to_dict(orient="records"))
-        orders = [ProductionOrderImport(**row) for row in records]
+
+        cleaned_records = []
+        for row in records:
+            if pd.isna(row.get('due_date')):
+                row['due_date'] = None
+            
+            if pd.isna(row.get('arrival_time')):
+                 raise ValueError(f"Missing or invalid arrival_time for order: {row.get('order_id_code')}")
+
+            cleaned_records.append(row)
+        
+        orders = [schemas.ProductionOrderImport(**row) for row in cleaned_records]
+        
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid data format: {str(e)}")
+        logger.error(f"Error during file processing or validation: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Invalid data format or content in the file. Error: {str(e)}")
     
     crud.import_production_orders(db, orders)
-    return {"message": f"Successfully imported {len(orders)} production orders. "}
+    return {"message": f"Successfully imported {len(orders)} production orders."}
 
 @router.get("/orders/", response_model=List[schemas.ProductionOrderOut])
 def get_filtered_sorted_production_orders(

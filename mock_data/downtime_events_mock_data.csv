@@ -1,2 +1,9 @@
 ﻿machine_id,start_time,end_time,reason,id
-M001,21-06-2025 23:00,22-06-2025 12:00,Planned Maintenance,1
+VMC-03,22-07-2025 09:00,22-07-2025 17:00,Planned Maintenance,1
+VMC-09,23-07-2025 14:15,23-07-2025 15:45,Unplanned Maintenance,2
+EDM-01,23-07-2025 11:05,23-07-2025 11:35,Unplanned Maintenance,3
+VMC-01,24-07-2025 09:00,24-07-2025 10:00,Operator Unavailable,4
+VMC-05,24-07-2025 16:20,24-07-2025 16:50,Unplanned Maintenance,5
+TURN-01,25-07-2025 11:30,25-07-2025 12:00,Planned Maintenance,6
+VMC-04,28-07-2025 09:00,28-07-2025 17:00,Planned Maintenance,7
+EDM-02,29-07-2025 10:10,29-07-2025 10:55,Unplanned Maintenance,8
