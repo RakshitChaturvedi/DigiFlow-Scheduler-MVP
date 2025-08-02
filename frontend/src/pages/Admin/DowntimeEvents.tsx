@@ -9,6 +9,7 @@ import AddDowntimeEventsModal from '../../components/AddDowntimeEventsModal';
 import ImportDowntimeEventsModal from '../../components/ImportDowntimeEventsModal';
 import { getMachines, type MachineData } from '../../api/machinesAPI';
 import type { DowntimeEventData } from '../../api/downtimeEventsApi';
+import { toast } from 'react-hot-toast';
 
 const DowntimeEvents: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
@@ -44,11 +45,11 @@ const DowntimeEvents: React.FC = () => {
   const deleteMutation = useMutation({
     mutationFn: deleteDowntimeEvent,
     onSuccess: () => {
-      alert('Downtime event deleted successfully.');
+      toast.success('Downtime event deleted successfully.');
       queryClient.invalidateQueries({ queryKey: ['downtimeEvents'] });
     },
     onError: (err: any) => {
-      alert(err.response?.data?.detail || 'Failed to delete downtime event.');
+      toast.error(err.response?.data?.detail || 'Failed to delete downtime event.');
     },
   });
 

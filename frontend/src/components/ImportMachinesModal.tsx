@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { importMachines } from '../api/machinesAPI';
+import { toast } from 'react-toastify';
 
 interface Props {
   onClose: () => void;
@@ -27,7 +28,7 @@ const ImportMachinesModal: React.FC<Props> = ({ onClose }) => {
 
     try {
       await importMachines(file);
-      alert('Machines imported successfully!');
+      toast.success('Machines imported successfully!');
       onClose();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to import machines.');

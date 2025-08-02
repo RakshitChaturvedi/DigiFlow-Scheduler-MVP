@@ -8,6 +8,7 @@ import {
 import { queryClient } from '../../lib/react-query';
 import AddMachineModal from '../../components/AddMachineModal';
 import ImportMachinesModal from '../../components/ImportMachinesModal';
+import { toast } from 'react-hot-toast';
 
 const Machines: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
@@ -24,11 +25,11 @@ const Machines: React.FC = () => {
   const deleteMutation = useMutation({
     mutationFn: deleteMachine,
     onSuccess: () => {
-      alert('Machine deleted successfully.');
+      toast.success('Machine deleted successfully.');
       queryClient.invalidateQueries({ queryKey: ['machines'] });
     },
     onError: (err: any) => {
-      alert(err.response?.data?.detail || 'Failed to delete machine');
+      toast.error(err.response?.data?.detail || 'Failed to delete machine');
     }
   });
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { importProcessSteps } from '../api/processStepsApi';
+import { toast } from 'react-hot-toast'
 
 interface Props {
   onClose: () => void;
@@ -27,7 +28,7 @@ const ImportProcessStepsModal: React.FC<Props> = ({ onClose }) => {
 
     try {
       await importProcessSteps(file);
-      alert('Process Steps imported successfully!');
+      toast.success('Process Steps imported successfully!');
       onClose();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to import process steps.');

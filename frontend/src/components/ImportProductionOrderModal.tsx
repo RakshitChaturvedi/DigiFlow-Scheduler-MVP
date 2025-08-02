@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient from '../api/axios'
+import {toast} from 'react-hot-toast'
 
 interface Props {
     onClose: () => void;
@@ -19,7 +20,7 @@ const ImportOrdersModal: React.FC<Props> = ({ onClose }) => {
       return response.data;
     },
     onSuccess: (data) => {
-      alert(data?.message || 'Orders imported successfully!');
+      toast.success(data?.message || 'Orders imported successfully!');
       queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
       onClose();
     },

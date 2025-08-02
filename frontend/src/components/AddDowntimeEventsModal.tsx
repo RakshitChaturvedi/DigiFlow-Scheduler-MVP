@@ -6,7 +6,8 @@ import {
   updateDowntimeEvent,
   type DowntimeEventData,
 } from "../api/downtimeEventsApi";
-import { formatInTimeZone } from "date-fns-tz"; // ✅
+import { formatInTimeZone } from "date-fns-tz"; 
+import {toast} from 'react-hot-toast';
 
 type Props = {
   isOpen: boolean;
@@ -66,8 +67,10 @@ const AddDowntimeEventsModal: React.FC<Props> = ({
 
       if (isEditing && initialData) {
         await updateDowntimeEvent(initialData.id, convertedData);
+        toast.success("Downtime event updated");
       } else {
         await createDowntimeEvent(convertedData);
+        toast.success("Downtime event created");
       }
 
       onSuccess();
@@ -75,6 +78,7 @@ const AddDowntimeEventsModal: React.FC<Props> = ({
       onClose();
     } catch (error) {
       console.error("Failed to save downtime event:", error);
+      toast.error("Failed to save downtime event");
     }
   };
 

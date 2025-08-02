@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { JobLogData, JobLogStatus } from '../api/jobLogApi';
 import { createJobLog, updateJobLog } from '../api/jobLogApi';
+import { toast } from 'react-hot-toast'
 
 interface Props {
   onClose: () => void;
@@ -45,12 +46,12 @@ const AddJobLogModal: React.FC<Props> = ({ onClose, isEditing = false, initialDa
       }
     },
     onSuccess: () => {
-      alert(isEditing ? 'Job log updated successfully!' : 'Job log created successfully!');
+      toast.success(isEditing ? 'Job log updated successfully!' : 'Job log created successfully!');
       queryClient.invalidateQueries({ queryKey: ['jobLogs'] });
       onClose();
     },
     onError: (err: any) => {
-      alert(err?.response?.data?.detail || 'Failed to save job log.');
+      toast.error(err?.response?.data?.detail || 'Failed to save job log.');
     },
   });
 

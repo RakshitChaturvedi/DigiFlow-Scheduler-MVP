@@ -8,6 +8,7 @@ import {
 import { queryClient } from '../../lib/react-query';
 import AddProcessStepModal from '../../components/AddProcessStepModal';
 import ImportProcessStepsModal from '../../components/ImportProcessStepsModal';
+import {toast} from 'react-hot-toast';
 
 const ProcessSteps: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
@@ -24,11 +25,11 @@ const ProcessSteps: React.FC = () => {
   const deleteMutation = useMutation({
     mutationFn: deleteProcessStep,
     onSuccess: () => {
-      alert('Process step deleted successfully.');
+      toast.success('Process step deleted successfully.');
       queryClient.invalidateQueries({ queryKey: ['processSteps'] });
     },
     onError: (err: any) => {
-      alert(err.response?.data?.detail || 'Failed to delete process step');
+      toast.error(err.response?.data?.detail || 'Failed to delete process step');
     },
   });
 
